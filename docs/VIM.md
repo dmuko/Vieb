@@ -201,6 +201,7 @@ sellaisinaan.
 | `f` `F` | LinkHints.activateMode / activateModeToOpenInNewTab | VimPage hints |
 | `K` `gt` | nextTab | `browser.step(1)` |
 | `J` `gT` | previousTab | `browser.step(-1)` |
+| | | Välilehdet sivupalkissa: `J` alempi välilehti (nextTab) ja `K` ylempi (previousTab), kuten j/k Vimissä. `gt`/`gT` eivät muutu. |
 | `g0` `g$` | firstTab / lastTab | `browser.select(index:)` |
 | `x` | removeTab | `browser.closeFront()` |
 | `X` | restoreTab | `browser.reopen()` |

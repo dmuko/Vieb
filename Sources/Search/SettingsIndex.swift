@@ -104,6 +104,7 @@ enum SettingsIndex {
 
         .init(id: "mouse", page: .keyboard, title: "Mouse and trackpad", icon: "computermouse"),
         .init(id: "anywhere", page: .keyboard, title: "From any app", icon: "macwindow.on.rectangle"),
+        .init(id: "vim", page: .keyboard, title: "Vim keys", icon: "keyboard"),
 
         .init(id: "updates", page: .about, title: "Updates", icon: "arrow.triangle.2.circlepath"),
         .init(id: "news", page: .about, title: "News by email", icon: "envelope.open"),
@@ -762,6 +763,10 @@ enum SettingsIndex {
               title: "Hold a swipe to pick from history", detail: "Keep your fingers down after a swipe back to pick a page",
               more: "Swipe back or forward and keep your fingers down: the pages that way appear, and moving up or down picks one.",
               keys: ["swipe.history"], words: ["gesture", "trackpad", "back"], kind: .note, findOnly: true),
+        .init(id: "vim.keys", group: "vim", icon: "keyboard",
+              title: "Vim keys", detail: "Scroll, change tabs and find from the keyboard alone, as Vimium does",
+              more: "j and k scroll, J and K go to the tab before and after, / finds, i hands every key to the page until Escape, and ? lists them all. Never with ⌘ held, and never while you type in a field: Escape there lets the field go.",
+              keys: ["vim.keys"], words: ["vim", "vimium", "vimari", "hjkl", "keyboard navigation", "modal", "keys only"]),
         .init(id: "launcher.on", group: "anywhere", icon: "rectangle.and.text.magnifyingglass",
               title: "Open the address field from any app", detail: "A key of your own raises it over the app you're in, as Spotlight does",
               more: "Return opens what you typed in a new tab of Search's window in front, or goes to the tab that already has it, and brings Search forward. Escape, a click outside or the key again puts it away and leaves you where you were. With a window of Search's in front, the key is left to the page: ⌘L is the field there.",
@@ -1241,6 +1246,7 @@ extension SettingsIndex {
             "pins.peek": prefs.pinsPeek,
             "pins.linksNewTab": prefs.pinLinksOpenTabs,
             "keys.backspaceBack": prefs.backspaceGoesBack,
+            "vim.keys": prefs.vimKeys,
             "links.peek": prefs.peekChoice.rawValue,
             "pages.120": prefs.fastPages.rawValue,
             "swipe.history": prefs.holdsHistory,
@@ -1289,6 +1295,9 @@ extension SettingsIndex {
         case "keys.backspaceBack":
             guard let on = value as? Bool else { return false }
             prefs.backspaceGoesBack = on
+        case "vim.keys":
+            guard let on = value as? Bool else { return false }
+            prefs.vimKeys = on
         case "sidebar.slides":
             guard let on = value as? Bool else { return false }
             prefs.slidesColumn = on

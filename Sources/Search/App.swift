@@ -703,6 +703,12 @@ struct ContentView: View {
                             .padding(.horizontal, cardCorner)
                     }
                 }
+                // Vim keys' mode and list of keys (Vim.swift), only with them on.
+                .overlay {
+                    if browser.prefs.vimKeys, fullscreenTab == nil {
+                        VimLayer(vim: browser.vim, activeID: browser.activeID)
+                    }
+                }
                 .padding(.leading, sideOnRight ? laidFar + panelRoom : 0)
                 .padding(.trailing, sideOnRight ? 0 : laidFar + panelRoom)
                 .padding(.bottom, laidFar)
@@ -1911,6 +1917,13 @@ struct ContentView: View {
         return (editor.delegate as? NSTextField)?.delegate is AddressField.Coordinator
     }
 
+    /// Whether Vim keys read this window's letters: not while something of
+    /// Search's that takes letters of its own is up — picking things to
+    /// hide, the welcome, a tab's or a space's name being typed.
+    private var vimListens: Bool {
+        !browser.veiling && !browser.welcoming && browser.editingTab == nil && !browser.makingSpace
+    }
+
     /// Whether the tab switcher can come up: in this window, with nothing
     /// over the page it would have to cover. The find bar isn't one: it sits
     /// in a corner, stays open, and looks again on the tab picked (#553).
@@ -1992,6 +2005,15 @@ struct ContentView: View {
             }
             browser.tabSwitcher.cancel()
             if event.keyCode == 53 { return true }
+        }
+
+        // Vim keys (Vim.swift), with them on: this window's own keys, while
+        // nothing of Search's that reads letters is up over the page. After
+        // the switcher and before Escape's chain, so i's Escape and a
+        // half-typed g's are Vim's, and every other Escape is as it was.
+        if browser.prefs.vimKeys, let window, event.window === window, vimListens,
+           browser.vim.take(event, typing: caretIn(event)) {
+            return true
         }
 
         // The accounts hanging from the sign-in box the caret is in: ↓ and ↑
@@ -2087,6 +2109,9 @@ struct ContentView: View {
                 browser.close(blank)
                 return true
             }
+            // With Vim keys on, Escape in a box on the page lets it go,
+            // once nothing of Search's above wanted it.
+            if browser.prefs.vimKeys, browser.vim.leaveField(event) { return true }
             guard browser.editing, browser.active?.isBlank == false else { return false }
             browser.dismiss()
             return true
