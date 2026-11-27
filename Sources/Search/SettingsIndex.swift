@@ -767,6 +767,10 @@ enum SettingsIndex {
               title: "Vim keys", detail: "Scroll, change tabs and find from the keyboard alone, as Vimium does",
               more: "j and k scroll, J and K go to the tab before and after, / finds, i hands every key to the page until Escape, and ? lists them all. Never with ⌘ held, and never while you type in a field: Escape there lets the field go.",
               keys: ["vim.keys"], words: ["vim", "vimium", "vimari", "hjkl", "keyboard navigation", "modal", "keys only"]),
+        .init(id: "vim.hints", group: "vim", icon: "character.cursor.ibeam",
+              title: "Hint letters", detail: "What the hints f and F put on links are made of, the first used most",
+              more: "Two or more letters or digits, none twice. Vimium's are sadfjklewcmpgh, the home row first.",
+              keys: ["vim.hints"], words: ["link hints", "hint characters", "vimium", "home row"], parent: "vim.keys"),
         .init(id: "launcher.on", group: "anywhere", icon: "rectangle.and.text.magnifyingglass",
               title: "Open the address field from any app", detail: "A key of your own raises it over the app you're in, as Spotlight does",
               more: "Return opens what you typed in a new tab of Search's window in front, or goes to the tab that already has it, and brings Search forward. Escape, a click outside or the key again puts it away and leaves you where you were. With a window of Search's in front, the key is left to the page: ⌘L is the field there.",
@@ -984,6 +988,7 @@ enum SettingsIndex {
         case "bookmarks.iconsOnly": return prefs.bookmarksBar
         case "bookmarks.newTabOnly": return prefs.bookmarksBar && !prefs.sideBookmarks
         case "passwords.fill.prove": return prefs.fillsPasswords
+        case "vim.hints": return prefs.vimKeys
         case "toolbar.left", "tabs.compact": return !prefs.sidebar
         case "profiles.oneWindow": return Profiles.shared.several
         case "spaces.links", "links.ask", "spaces.buttons": return prefs.usesSpaces
@@ -1247,6 +1252,7 @@ extension SettingsIndex {
             "pins.linksNewTab": prefs.pinLinksOpenTabs,
             "keys.backspaceBack": prefs.backspaceGoesBack,
             "vim.keys": prefs.vimKeys,
+            "vim.hints": prefs.vimHintCharacters,
             "links.peek": prefs.peekChoice.rawValue,
             "pages.120": prefs.fastPages.rawValue,
             "swipe.history": prefs.holdsHistory,
@@ -1298,6 +1304,9 @@ extension SettingsIndex {
         case "vim.keys":
             guard let on = value as? Bool else { return false }
             prefs.vimKeys = on
+        case "vim.hints":
+            guard let letters = value as? String else { return false }
+            prefs.vimHintCharacters = letters
         case "sidebar.slides":
             guard let on = value as? Bool else { return false }
             prefs.slidesColumn = on

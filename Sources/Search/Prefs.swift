@@ -962,6 +962,12 @@ final class Preferences: ObservableObject {
     @Published var vimKeys: Bool {
         didSet { store.set(vimKeys, forKey: "vim.keys") }
     }
+    /// The letters Vim keys' hints are made of (f, F); Vimium's unless
+    /// changed. Read through VimKeys.alphabet, which keeps it usable.
+    @Published var vimHintCharacters: String {
+        didSet { store.set(vimHintCharacters, forKey: "vim.hints") }
+    }
+    nonisolated static let vimHintDefault = "sadfjklewcmpgh"
     /// Pins as in Arc: a link from a pinned tab to another site opens in a
     /// peek, so the pin stays on its page (see Peek.swift), and ⌘W takes it
     /// back to the page it was pinned at. Half of "Pins keep their site"
@@ -1663,6 +1669,7 @@ final class Preferences: ObservableObject {
         splitControls = store.bool(forKey: "split.controls")
         backspaceGoesBack = store.bool(forKey: Preferences.backspaceKey)
         vimKeys = store.bool(forKey: "vim.keys")
+        vimHintCharacters = store.string(forKey: "vim.hints") ?? Preferences.vimHintDefault
         pinsPeek = keepsSite
         readsTwins = Retired.off("reader.twins", store)
         // Always on, with no switch since 27 Nov 2026 (see Retired).

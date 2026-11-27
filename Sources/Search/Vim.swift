@@ -29,6 +29,9 @@ enum VimCommand: String, CaseIterable {
     case copyCurrentUrl
     case enterInsertMode
     case showHelp
+    case linkHints = "LinkHints.activateMode"
+    case linkHintsNewTab = "LinkHints.activateModeToOpenInNewTab"
+    case focusInput
 
     /// Vimium's own keys for them, made for a row of tabs across the top:
     /// K goes right, J left.
@@ -43,6 +46,7 @@ enum VimCommand: String, CaseIterable {
         "yy": .copyCurrentUrl,
         "i": .enterInsertMode,
         "?": .showHelp,
+        "f": .linkHints, "F": .linkHintsNewTab, "gi": .focusInput,
     ]
 
     /// The keys for the way the tabs run. Down a column, J goes down to
@@ -95,11 +99,14 @@ enum VimCommand: String, CaseIterable {
         case .copyCurrentUrl: "Copy the page's address"
         case .enterInsertMode: "Keys to the page until Escape"
         case .showHelp: "Show these keys"
+        case .linkHints: "Click a link or button"
+        case .linkHintsNewTab: "Open a link in a new tab"
+        case .focusInput: "Type in the first field"
         }
     }
 
     enum Group: String, CaseIterable {
-        case page = "Page", tabs = "Tabs", find = "Find", other = "Other"
+        case page = "Page", links = "Links", tabs = "Tabs", find = "Find", other = "Other"
     }
 
     var group: Group {
@@ -108,6 +115,7 @@ enum VimCommand: String, CaseIterable {
              .scrollToTop, .scrollToBottom, .goBack, .goForward, .reload, .copyCurrentUrl: .page
         case .nextTab, .previousTab, .firstTab, .lastTab, .removeTab, .restoreTab, .createTab, .duplicateTab: .tabs
         case .enterFindMode, .performFind, .performBackwardsFind: .find
+        case .linkHints, .linkHintsNewTab, .focusInput: .links
         case .enterInsertMode, .showHelp: .other
         }
     }
@@ -161,6 +169,24 @@ final class VimKeys: ObservableObject {
     @Published private(set) var insertTab: Tab.ID?
     /// The list of keys (?) is up.
     @Published var helping = false
+    /// Hints are up on a page (f, F): the letters picking one.
+    @Published private(set) var hinting: Hinting?
+
+    struct Hinting: Equatable {
+        /// The tab whose page has them: another tab in front ends them.
+        let tab: Tab.ID?
+        weak var page: PageView?
+        /// F: the link opens in a tab behind this one.
+        let newTab: Bool
+        let alphabet: String
+        var typed = ""
+        /// Drawn on the page: until then letters wait in `typed`.
+        var shown = false
+
+        static func == (a: Hinting, b: Hinting) -> Bool {
+            a.tab == b.tab && a.page === b.page && a.newTab == b.newTab && a.typed == b.typed && a.shown == b.shown
+        }
+    }
 
     private weak var browser: Browser?
     private var sequence = VimSequence()
@@ -218,6 +244,9 @@ final class VimKeys: ObservableObject {
         if helping {
             helping = false
             return name == "<esc>" || name == "?" || name == "q"
+        }
+        if let hints = hinting {
+            if let taken = hint(event, name: name, hints, in: browser) { return taken }
         }
         if inserting {
             guard name == "<esc>" else { return false }
@@ -306,7 +335,125 @@ final class VimKeys: ObservableObject {
         case .copyCurrentUrl: browser.copyAddress()
         case .enterInsertMode: insertTab = browser.activeID
         case .showHelp: helping = true
+        case .linkHints: showHints(in: browser, newTab: false)
+        case .linkHintsNewTab: showHints(in: browser, newTab: true)
+        case .focusInput: VimPage.page(browser)?.evaluateInSearch(VimPage.focusInput)
         }
+    }
+
+    // MARK: hints
+
+    /// The letters hints are made of (Settings › Vim keys), as typed there
+    /// if they make sense: two or more, none twice; else Vimium's.
+    static func alphabet(_ typed: String) -> String {
+        var seen = Set<Character>()
+        let letters = typed.lowercased().filter { ($0.isLetter || $0.isNumber) && seen.insert($0).inserted }
+        return letters.count >= 2 ? letters : Preferences.vimHintDefault
+    }
+
+    /// Vimium's hints for so many links: as short as they can be, none the
+    /// start of another, the first letters of the alphabet the most used.
+    static func labels(_ count: Int, alphabet: String) -> [String] {
+        let letters = Array(alphabet)
+        guard count > 0, letters.count >= 2 else { return [] }
+        var hints = [""]
+        var offset = 0
+        while hints.count - offset < count || hints.count == 1 {
+            let hint = hints[offset]
+            offset += 1
+            for letter in letters { hints.append(String(letter) + hint) }
+        }
+        return hints[offset..<(offset + count)].sorted().map { String($0.reversed()) }
+    }
+
+    private func showHints(in browser: Browser, newTab: Bool) {
+        guard let page = VimPage.page(browser) else { return }
+        let alphabet = VimKeys.alphabet(browser.prefs.vimHintCharacters)
+        let hints = Hinting(tab: browser.activeID, page: page, newTab: newTab, alphabet: alphabet)
+        hinting = hints
+        page.callInSearch(VimPage.collectHints, arguments: [:]) { [weak self, weak page] count in
+            guard let self, let page, self.hinting?.page === page else { return }
+            let labels = VimKeys.labels((count as? Int) ?? 0, alphabet: alphabet)
+            guard !labels.isEmpty else {
+                self.hinting = nil
+                return
+            }
+            page.callInSearch(VimPage.drawHints, arguments: ["labels": labels]) { [weak self] _ in
+                guard let self, self.hinting?.page === page else { return }
+                self.hinting?.shown = true
+                // Letters typed while they were being drawn.
+                if let typed = self.hinting?.typed, !typed.isEmpty { self.filter(typed, in: browser) }
+            }
+        }
+    }
+
+    /// A key while hints are up. Nil when hints are over and the key is
+    /// to be read as any other.
+    private func hint(_ event: NSEvent, name: String?, _ hints: Hinting, in browser: Browser) -> Bool? {
+        guard hints.page != nil, hints.tab == browser.activeID else {
+            endHints()
+            return nil
+        }
+        if event.modifierFlags.contains(.command) {
+            endHints()
+            return false
+        }
+        if name == "<esc>" {
+            endHints()
+            return true
+        }
+        if event.keyCode == 51 {  // ⌫: the last letter taken back
+            guard !hints.typed.isEmpty else { return true }
+            hinting?.typed.removeLast()
+            if hints.shown { filter(hinting?.typed ?? "", in: browser) }
+            return true
+        }
+        guard let letter = name?.lowercased(), letter.count == 1, hints.alphabet.contains(letter) else {
+            return true  // anything else does nothing while they are up
+        }
+        hinting?.typed += letter
+        if hints.shown { filter(hinting?.typed ?? "", in: browser) }
+        return true
+    }
+
+    private func filter(_ typed: String, in browser: Browser) {
+        guard let page = hinting?.page else { return }
+        page.callInSearch(VimPage.filterHints, arguments: ["typed": typed]) { [weak self, weak page] answer in
+            guard let self, let page, let hints = self.hinting, hints.page === page else { return }
+            let answer = answer as? [String: Any] ?? [:]
+            switch answer["state"] as? String {
+            case "hit":
+                self.hinting = nil
+                self.follow(answer, on: page, newTab: hints.newTab, in: browser)
+            case "none":
+                // A letter no hint goes on with: not taken.
+                if hints.typed == typed { self.hinting?.typed.removeLast() }
+            case "more":
+                break
+            default:
+                // Scrolled or gone with the page: nothing to pick from.
+                self.hinting = nil
+            }
+        }
+    }
+
+    /// The hint picked: a click where it is, as the hand's would be; with
+    /// F, its link in a tab behind this one, or a ⌘-click if it has none.
+    private func follow(_ hit: [String: Any], on page: PageView, newTab: Bool, in browser: Browser) {
+        guard let x = hit["x"] as? Double, let y = hit["y"] as? Double else { return }
+        if newTab, let href = hit["href"] as? String, let url = URL(string: href),
+           ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            let source = browser.tabs.first { $0.built === page }
+            browser.open(url, foreground: false, from: source)
+            return
+        }
+        PageHands.click(page, at: [x, y], held: newTab ? .command : [])
+    }
+
+    private func endHints() {
+        guard let hints = hinting else { return }
+        hinting = nil
+        hints.page?.evaluateInSearch(VimPage.removeHints)
     }
 }
 
@@ -380,6 +527,160 @@ enum VimPage {
     if (to === 'top') scroller.scrollTo({ top: 0, behavior });
     else if (to === 'bottom') scroller.scrollTo({ top: target.scrollHeight, behavior });
     else scroller.scrollBy({ left: dx, top: half !== 0 ? half * height / 2 : dy, behavior });
+    """#
+
+    /// Everything on the page a hint can go on, in sight and not under
+    /// something else, in the page, its open shadow roots and its frames of
+    /// the same site; kept in Search's world for drawHints. Answers how many.
+    static let collectHints = #"""
+    const old = globalThis.__vimHints;
+    if (old) { old.end(); }
+    const SEL = 'a[href],area[href],button:not([disabled]),input:not([type=hidden]):not([disabled]),' +
+      'select:not([disabled]),textarea:not([disabled]),summary,[contenteditable]:not([contenteditable=false]),' +
+      '[role=button],[role=link],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=menuitem],' +
+      '[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=treeitem],[role=combobox],' +
+      '[onclick],[tabindex]:not([tabindex="-1"]),label[for]';
+    const W = innerWidth, H = innerHeight;
+    const found = [];
+    const seen = new Set();
+    const shown = (el) => {
+      if (el.checkVisibility && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+      return !el.closest('[aria-hidden=true],[inert]');
+    };
+    // The first box of it in sight (a link that wraps has several), and a
+    // point in it nothing else covers.
+    const spot = (el, dx, dy, root) => {
+      for (const r of el.getClientRects()) {
+        const left = Math.max(r.left + dx, 0), top = Math.max(r.top + dy, 0);
+        const right = Math.min(r.right + dx, W), bottom = Math.min(r.bottom + dy, H);
+        if (right - left < 3 || bottom - top < 3) continue;
+        const points = [[(left + right) / 2, (top + bottom) / 2], [left + 2, top + 2], [right - 2, bottom - 2]];
+        for (const [x, y] of points) {
+          const hit = (root.elementFromPoint ? root : document).elementFromPoint(x - dx, y - dy);
+          if (!hit || hit === el || el.contains(hit) || hit.contains(el) && hit.tagName !== 'BODY' && hit.tagName !== 'HTML') {
+            return { left, top, x, y };
+          }
+        }
+      }
+      return null;
+    };
+    const walk = (root, dx, dy) => {
+      for (const el of root.querySelectorAll(SEL)) {
+        if (seen.has(el)) continue;
+        seen.add(el);
+        // A button inside a link (or a link's own icon) is the link's.
+        const outer = el.parentElement && el.parentElement.closest('a[href],button');
+        if (outer && seen.has(outer)) continue;
+        if (!shown(el)) continue;
+        const at = spot(el, dx, dy, root);
+        if (!at) continue;
+        const href = el.href && typeof el.href === 'string' ? el.href : (el.href && el.href.baseVal) || null;
+        found.push({ el, href, ...at });
+      }
+      for (const host of root.querySelectorAll('*')) {
+        if (host.shadowRoot) walk(host.shadowRoot, dx, dy);
+      }
+      for (const frame of root.querySelectorAll('iframe,frame')) {
+        let inner = null;
+        try { inner = frame.contentDocument; } catch (e) { inner = null; }
+        if (!inner || !inner.documentElement) continue;
+        const r = frame.getBoundingClientRect();
+        if (r.bottom + dy < 0 || r.top + dy > H || r.right + dx < 0 || r.left + dx > W) continue;
+        walk(inner, dx + r.left + frame.clientLeft, dy + r.top + frame.clientTop);
+      }
+    };
+    walk(document, 0, 0);
+    const state = { items: found.map((f) => ({ ...f })), host: null };
+    state.end = () => {
+      if (state.host) state.host.remove();
+      removeEventListener('scroll', state.end, true);
+      removeEventListener('resize', state.end, true);
+      if (globalThis.__vimHints === state) globalThis.__vimHints = null;
+    };
+    globalThis.__vimHints = state;
+    return found.length;
+    """#
+
+    /// The hints drawn over what they go on, in a closed root of their own
+    /// the page can't style or see into. Scrolling takes them away, as the
+    /// things under them have moved.
+    static let drawHints = #"""
+    const state = globalThis.__vimHints;
+    if (!state) return false;
+    const host = document.createElement('search-vim-hints');
+    host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
+    const shadow = host.attachShadow({ mode: 'closed' });
+    const style = document.createElement('style');
+    style.textContent = `
+      .h { position: fixed; padding: 1px 4px; border-radius: 4px; font: 700 11px/14px ui-monospace, Menlo, monospace;
+           letter-spacing: .02em; text-transform: uppercase; color: #2b2200; background: #ffd84d;
+           border: 1px solid #c9a400; box-shadow: 0 1px 3px rgba(0,0,0,.3); white-space: nowrap; }
+      .h b { font-weight: 700; color: #9a8100; }
+      .h.gone { display: none; }`;
+    shadow.appendChild(style);
+    state.items.forEach((item, i) => {
+      const node = document.createElement('div');
+      node.className = 'h';
+      node.style.left = Math.max(0, Math.min(item.left, innerWidth - 24)) + 'px';
+      node.style.top = Math.max(0, Math.min(item.top, innerHeight - 16)) + 'px';
+      node.textContent = labels[i];
+      item.label = labels[i];
+      item.node = node;
+      shadow.appendChild(node);
+    });
+    (document.documentElement || document.body).appendChild(host);
+    state.host = host;
+    addEventListener('scroll', state.end, true);
+    addEventListener('resize', state.end, true);
+    return true;
+    """#
+
+    /// The hints that still go on with what is typed. "hit" with where to
+    /// click when one is left; "none" when no hint goes on with it.
+    static let filterHints = #"""
+    const state = globalThis.__vimHints;
+    if (!state || !state.host) return { state: 'gone' };
+    const left = state.items.filter((item) => item.label.startsWith(typed));
+    if (left.length === 0) return { state: 'none' };
+    const hit = left.length === 1 && left[0].label === typed ? left[0] : null;
+    if (hit) {
+      state.end();
+      return { state: 'hit', x: hit.x, y: hit.y, href: hit.href };
+    }
+    for (const item of state.items) {
+      const on = item.label.startsWith(typed);
+      item.node.classList.toggle('gone', !on);
+      if (on) {
+        item.node.textContent = '';
+        const done = document.createElement('b');
+        done.textContent = typed;
+        item.node.append(done, item.label.slice(typed.length));
+      }
+    }
+    return { state: 'more' };
+    """#
+
+    static let removeHints = "globalThis.__vimHints && globalThis.__vimHints.end(); void 0"
+
+    /// gi: the first field in sight to type in, the caret at its end.
+    static let focusInput = #"""
+    (function () {
+      const fields = document.querySelectorAll('input:not([type=hidden]):not([disabled]):not([readonly]),' +
+        'textarea:not([disabled]):not([readonly]),[contenteditable]:not([contenteditable=false])');
+      const text = /^(text|search|email|url|tel|password|number|)$/i;
+      for (const el of fields) {
+        if (el.tagName === 'INPUT' && !text.test(el.getAttribute('type') || '')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.top > innerHeight) continue;
+        if (el.checkVisibility && !el.checkVisibility({ checkVisibilityCSS: true })) continue;
+        el.focus();
+        if (typeof el.setSelectionRange === 'function' && typeof el.value === 'string') {
+          try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {}
+        }
+        return true;
+      }
+      return false;
+    })()
     """#
 
     /// Escape in a box on the page: the box, or the one inside a frame of
@@ -465,6 +766,7 @@ struct VimLayer: View {
     }
 
     private var badge: String? {
+        if let hints = vim.hinting { return hints.typed.isEmpty ? "-- HINT --" : "-- HINT -- \(hints.typed.uppercased())" }
         if vim.insertTab != nil, vim.insertTab == activeID { return "-- INSERT --" }
         if !vim.pending.isEmpty { return vim.pending }
         return nil
@@ -517,5 +819,23 @@ struct VimHelp: View {
             let keys = map.filter { $0.value == command }.keys.sorted { ($0.count, $0) < ($1.count, $1) }
             return keys.isEmpty ? nil : Row(keys: keys.joined(separator: " "), command: command)
         }
+    }
+}
+
+/// Settings › Vim keys › Hint letters: a short box, monospaced, which goes
+/// back to Vimium's letters when emptied.
+struct VimHintField: View {
+    @Binding var text: String
+
+    var body: some View {
+        TextField("", text: $text, prompt: Text(Preferences.vimHintDefault))
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(Palette.ink)
+            .frame(width: 150)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Palette.wash, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .onSubmit { if text.isEmpty { text = Preferences.vimHintDefault } }
     }
 }
