@@ -21,7 +21,7 @@ import split_view as sv  # noqa: E402
 sv.use("vim-keys")
 t = sv.T()
 
-CODES = {"j": 38, "k": 40, "d": 2, "u": 32, "g": 5, "G": 5, "K": 40, "J": 38, "i": 34, "x": 7, "/": 26, "?": 27, "a": 0}
+CODES = {"f": 3, "F": 3, "s": 1, "e": 14, "h": 4, "j": 38, "k": 40, "d": 2, "u": 32, "g": 5, "G": 5, "K": 40, "J": 38, "i": 34, "x": 7, "/": 26, "?": 27, "a": 0}
 
 
 def key(ch, mods=None, ignoring=None, settle=0.5):
@@ -109,6 +109,38 @@ try:
     # The list of keys.
     t.ok("? lists the keys", key("?", mods=["shift"], ignoring="+")["helping"] is True)
     t.ok("Escape puts the list away", key(ESC)["helping"] is False)
+
+    # Hints: f clicks, F opens behind, Escape takes them away, gi types.
+    links = (f"<a id=one href='{sv.BASE}/first'>one</a> <a id=two href='{sv.BASE}/second'>two</a> "
+             "<button id=three onclick=\"document.title='clicked'\">three</button> <input id=field>")
+    sv.ev(a, "document.body.innerHTML = " + repr(links) + "; scrollTo(0, 0); document.title = 'links'; true"); time.sleep(0.4)
+    up = key("f")
+    t.ok("f puts hints up", up["taken"] and up["hints"] == "shown", up)
+    # Four things to click, the field too: a d f s, Vimium's home row sorted.
+    picked = key("f", settle=0.8)
+    t.ok("a hint's letter clicks it", picked["hints"] == "" and sv.ev(a, "document.title") == "clicked",
+         (picked, sv.ev(a, "document.title")))
+    key("f"); gone = key(ESC)
+    t.ok("Escape takes the hints away", gone["taken"] and gone["hints"] == "", gone)
+    tabs = sv.cmd({"do": "vimkey", "chars": "z", "code": 6})["tabs"]
+    key("F", ignoring="f"); behind = key("d", settle=1.2)
+    t.ok("F opens the link in a tab behind", behind["tabs"] == tabs + 1 and behind["active"].lower().startswith(a.lower()),
+         (behind, tabs))
+    key("g"); key("i")
+    t.ok("gi puts the caret in the first field", sv.ev(a, "document.activeElement.id") == "field", sv.ev(a, "document.activeElement.id"))
+    key(ESC, settle=0.6)
+    key("f"); followed = key("a", settle=1.5)
+    t.ok("f on a link follows it", sv.url(sv.sp("state"), a).endswith("/first"), sv.url(sv.sp("state"), a))
+
+    # Hint letters of one's own.
+    sv.cmd({"do": "settings", "set": "vim.hints", "value": "hje"}); time.sleep(0.4)
+    links = "".join(f"<button onclick=\"document.title='b{n}'\">b{n}</button> " for n in range(4))
+    sv.ev(a, "document.body.innerHTML = " + repr(links) + "; true"); time.sleep(0.4)
+    # Four with h j e: e, hh, j, hj. j alone is the third.
+    key("f"); done = key("j", settle=0.8)
+    t.ok("hints made of one's own letters", done["hints"] == "" and sv.ev(a, "document.title") == "b2",
+         (done, sv.ev(a, "document.title")))
+    sv.cmd({"do": "settings", "set": "vim.hints", "value": "sadfjklewcmpgh"}); time.sleep(0.3)
 
     # x closes the tab in front, as ⌘W.
     count = len(sv.sp("state")["tabs"])

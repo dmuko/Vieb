@@ -3612,6 +3612,8 @@ final class Bench {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 answer(["taken": taken, "pending": browser.vim.pending, "inserting": browser.vim.inserting,
                         "helping": browser.vim.helping, "finding": browser.finding,
+                        "hints": browser.vim.hinting.map { $0.shown ? "shown" : "coming" } ?? "",
+                        "tabs": browser.tabs.count,
                         "active": browser.activeID?.uuidString ?? "", "typing": browser.active?.typing ?? false])
             }
 

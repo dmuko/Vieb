@@ -107,6 +107,41 @@ final class VimTests: XCTestCase {
         XCTAssertEqual(column.feed("t"), .run(.nextTab), "gt is next either way")
     }
 
+    // MARK: hints
+
+    func testHintsAreShortAndNoneStartsAnother() {
+        for count in [1, 2, 3, 14, 15, 60, 196, 197, 500] {
+            let labels = VimKeys.labels(count, alphabet: Preferences.vimHintDefault)
+            XCTAssertEqual(labels.count, count)
+            XCTAssertEqual(Set(labels).count, count, "none twice")
+            for a in labels { for b in labels where a != b { XCTAssertFalse(b.hasPrefix(a), "\(a) starts \(b)") } }
+            let longest = labels.map(\.count).max() ?? 0
+            XCTAssertLessThanOrEqual(longest, count <= 14 ? 1 : count <= 196 ? 2 : 3, "\(count) links")
+        }
+    }
+
+    func testTheHomeRowFirst() {
+        XCTAssertEqual(VimKeys.labels(3, alphabet: Preferences.vimHintDefault), ["a", "d", "s"])
+        XCTAssertEqual(VimKeys.labels(3, alphabet: "ab"), ["aa", "b", "ab"])
+        XCTAssertEqual(VimKeys.labels(0, alphabet: "ab"), [])
+    }
+
+    func testHintLettersAreKeptUsable() {
+        XCTAssertEqual(VimKeys.alphabet("asdfjklö"), "asdfjklö")
+        XCTAssertEqual(VimKeys.alphabet("AaSs"), "as", "lower case, none twice")
+        XCTAssertEqual(VimKeys.alphabet("a"), Preferences.vimHintDefault, "one letter can't make hints")
+        XCTAssertEqual(VimKeys.alphabet(" ,.-"), Preferences.vimHintDefault)
+    }
+
+    func testFAndGiAreTheirs() {
+        var sequence = VimSequence()
+        XCTAssertEqual(sequence.feed("f"), .run(.linkHints))
+        XCTAssertEqual(sequence.feed("F"), .run(.linkHintsNewTab))
+        XCTAssertEqual(sequence.feed("g"), .pending)
+        XCTAssertEqual(sequence.feed("i"), .run(.focusInput))
+        XCTAssertEqual(VimCommand.linkHints.rawValue, "LinkHints.activateMode", "Vimium's name")
+    }
+
     func testEveryCommandHasADefaultKey() {
         XCTAssertEqual(Set(VimCommand.defaults.values), Set(VimCommand.allCases))
     }
