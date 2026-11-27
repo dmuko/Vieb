@@ -3583,6 +3583,38 @@ final class Bench {
                     "firstFolderImages": folder?.items.prefix(4).map { $0.image != nil } ?? [],
                     "active": browser.active?.address?.absoluteString ?? ""])
 
+        case "vimkey":
+            // A key with no ⌘ pressed while the page has the keyboard, put
+            // through the window's key handling as the monitor would (Vim
+            // keys, Vim.swift), and to the page if nothing there took it.
+            // Reports whether Search took it and Vim's state after. Only on
+            // a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "vimkey only works on a --test run"]); return }
+            guard let tab = browser.active, let web = tab.built, let window = web.window,
+                  let chars = request["chars"] as? String, let code = request["code"] as? Int
+            else { answer(["error": "vimkey needs a loaded tab, the characters and the key code"]); return }
+            var flags: NSEvent.ModifierFlags = []
+            let mods = request["mods"] as? [String] ?? []
+            if mods.contains("shift") { flags.insert(.shift) }
+            if mods.contains("option") { flags.insert(.option) }
+            if mods.contains("control") { flags.insert(.control) }
+            if request["keepFocus"] as? Bool != true, !(window.firstResponder is NSTextView) {
+                window.makeFirstResponder(web)
+            }
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                characters: chars, charactersIgnoringModifiers: request["ignoring"] as? String ?? chars,
+                isARepeat: request["repeat"] as? Bool == true, keyCode: UInt16(code)
+            ) else { answer(["error": "no event"]); return }
+            let taken = ContentView.keyHooks[ObjectIdentifier(browser)]?(event) == nil
+            if !taken, window.firstResponder === web { web.keyDown(with: event) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                answer(["taken": taken, "pending": browser.vim.pending, "inserting": browser.vim.inserting,
+                        "helping": browser.vim.helping, "finding": browser.finding,
+                        "active": browser.activeID?.uuidString ?? "", "typing": browser.active?.typing ?? false])
+            }
+
         case "keyeq":
             // A ⌘ shortcut pressed while the page has the keyboard, put
             // through the app's key handling and then to the page's view, as

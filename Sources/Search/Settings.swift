@@ -1162,6 +1162,7 @@ struct SettingsPanel: View {
         case "links.optionSplit": Switch(on: $prefs.optionClickSplits)
         case "split.controls": Switch(on: $prefs.splitControls)
         case "keys.backspaceBack": Switch(on: $prefs.backspaceGoesBack)
+        case "vim.keys": Switch(on: $prefs.vimKeys)
         case "autoscroll": Switch(on: $prefs.autoScroll)
         case "wheel.smooth": Switch(on: $prefs.wheelGlides)
         case "launcher.on": Switch(on: $prefs.launcher)
