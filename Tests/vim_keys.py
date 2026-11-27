@@ -7,7 +7,7 @@ afterwards. Keys go through the window's own key handling (bench `vimkey`),
 then to the page if nothing took them.
 
 Off (as it ships), j is the page's. On: j/d/G/gg scroll the page, K and J
-change tabs, / opens the find bar, i hands every key to the page until
+change tabs (J the tab below in a column, K the one to the right across the top), / opens the find bar, i hands every key to the page until
 Escape, a box with the caret keeps every key and Escape lets it go, ? lists
 the keys. ⌘ keys are never Vim's.
 """
@@ -72,6 +72,16 @@ try:
     t.ok("K goes to the next tab", moved["active"].lower().startswith(b.lower()), (moved["active"], b))
     moved = key("J")
     t.ok("J comes back", moved["active"].lower().startswith(a.lower()), (moved["active"], a))
+    # Tabs down a column: J is the tab below, K the one above.
+    sv.cmd({"do": "ui", "sidebar": True}); time.sleep(0.8)
+    moved = key("J")
+    t.ok("in a column, J goes to the tab below", moved["active"].lower().startswith(b.lower()), (moved["active"], b))
+    moved = key("K")
+    t.ok("and K to the one above", moved["active"].lower().startswith(a.lower()), (moved["active"], a))
+    sv.cmd({"do": "ui", "sidebar": False}); time.sleep(0.8)
+    moved = key("K")
+    t.ok("across the top again, K goes right", moved["active"].lower().startswith(b.lower()), (moved["active"], b))
+    key("J")
 
     # Find.
     t.ok("/ opens the find bar", key("/", mods=["shift"], ignoring="7")["finding"] is True)

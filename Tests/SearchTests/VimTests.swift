@@ -96,6 +96,17 @@ final class VimTests: XCTestCase {
         XCTAssertEqual(sequence.feed("j"), .pass)
     }
 
+    func testJAndKFollowTheTabs() {
+        var across = VimSequence(map: VimCommand.defaults(column: false))
+        XCTAssertEqual(across.feed("K"), .run(.nextTab), "a row across the top: K is the tab to the right")
+        XCTAssertEqual(across.feed("J"), .run(.previousTab))
+        var column = VimSequence(map: VimCommand.defaults(column: true))
+        XCTAssertEqual(column.feed("J"), .run(.nextTab), "a column: J is the tab below")
+        XCTAssertEqual(column.feed("K"), .run(.previousTab))
+        XCTAssertEqual(column.feed("g"), .pending)
+        XCTAssertEqual(column.feed("t"), .run(.nextTab), "gt is next either way")
+    }
+
     func testEveryCommandHasADefaultKey() {
         XCTAssertEqual(Set(VimCommand.defaults.values), Set(VimCommand.allCases))
     }

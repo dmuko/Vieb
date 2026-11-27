@@ -30,7 +30,8 @@ enum VimCommand: String, CaseIterable {
     case enterInsertMode
     case showHelp
 
-    /// Vimium's own keys for them.
+    /// Vimium's own keys for them, made for a row of tabs across the top:
+    /// K goes right, J left.
     static let defaults: [String: VimCommand] = [
         "j": .scrollDown, "k": .scrollUp, "h": .scrollLeft, "l": .scrollRight,
         "d": .scrollPageDown, "u": .scrollPageUp, "gg": .scrollToTop, "G": .scrollToBottom,
@@ -43,6 +44,18 @@ enum VimCommand: String, CaseIterable {
         "i": .enterInsertMode,
         "?": .showHelp,
     ]
+
+    /// The keys for the way the tabs run. Down a column, J goes down to
+    /// the tab below and K up to the one above, as j and k move in Vim;
+    /// Vimium's K-is-right only reads that way in a row across the top.
+    /// gt and gT stay next and previous either way.
+    static func defaults(column: Bool) -> [String: VimCommand] {
+        guard column else { return defaults }
+        var map = defaults
+        map["J"] = .nextTab
+        map["K"] = .previousTab
+        return map
+    }
 
     /// Held down, the key runs again: scrolling and walking the tabs. The
     /// others run once, so a held x doesn't close the window's every tab.
@@ -151,6 +164,11 @@ final class VimKeys: ObservableObject {
 
     private weak var browser: Browser?
     private var sequence = VimSequence()
+    /// Whether `sequence`'s keys are those for tabs down a column.
+    private var column = false
+
+    /// The keys as they are now, for the list of keys.
+    var map: [String: VimCommand] { sequence.map }
     private var expiry: DispatchWorkItem?
 
     init(browser: Browser) {
@@ -191,6 +209,11 @@ final class VimKeys: ObservableObject {
     func take(_ event: NSEvent, typing: Bool) -> Bool {
         guard let browser else { return false }
         let name = VimKeys.name(of: event)
+        if browser.prefs.sidebar != column {
+            column = browser.prefs.sidebar
+            sequence = VimSequence(map: VimCommand.defaults(column: column))
+            pending = ""
+        }
 
         if helping {
             helping = false
@@ -420,7 +443,7 @@ struct VimLayer: View {
     var body: some View {
         ZStack {
             if vim.helping {
-                VimHelp(map: VimCommand.defaults) { vim.helping = false }
+                VimHelp(map: vim.map) { vim.helping = false }
                     .transition(.opacity)
             }
             if let words = badge {
