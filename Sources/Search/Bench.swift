@@ -3611,13 +3611,23 @@ final class Bench {
                 isARepeat: request["repeat"] as? Bool == true, keyCode: UInt16(code)
             ) else { answer(["error": "no event"]); return }
             let taken = ContentView.keyHooks[ObjectIdentifier(browser)]?(event) == nil
-            if !taken, let web, window.firstResponder === web { web.keyDown(with: event) }
+            if !taken, let web, window.firstResponder === web {
+                web.keyDown(with: event)
+            } else if !taken, window.firstResponder is NSTextView {
+                // A field of Search's own (Find a setting): the window hands
+                // it the key, as AppKit would after the monitor.
+                window.sendEvent(event)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 answer(["taken": taken, "pending": browser.vim.pending, "inserting": browser.vim.inserting,
                         "helping": browser.vim.helping, "finding": browser.finding,
                         "hints": browser.vim.hinting.map { $0.shown ? "shown" : "coming" } ?? "",
                         "tabs": browser.tabs.count,
-                        "active": browser.activeID?.uuidString ?? "", "typing": browser.active?.typing ?? false])
+                        "active": browser.activeID?.uuidString ?? "", "typing": browser.active?.typing ?? false,
+                        // Search's own page in front with rows (Settings).
+                        "row": browser.vim.list?.selected ?? "", "rows": browser.vim.list?.rows() ?? [],
+                        "settingsPage": browser.settingsPage.rawValue,
+                        "caret": (browser.window?.firstResponder as? NSTextView) != nil])
             }
 
         case "keyeq":

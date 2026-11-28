@@ -157,11 +157,11 @@ struct InternalPageView: View {
         case .settings:
             SettingsPanel(browser: browser, prefs: browser.prefs, asked: page.detail, tabID: tab.id)
         case .history:
-            HistoryPanel(browser: browser)
+            HistoryPanel(browser: browser, tabID: tab.id)
         case .downloads:
-            DownloadsPanel(browser: browser, loot: browser.loot)
+            DownloadsPanel(browser: browser, loot: browser.loot, tabID: tab.id)
         case .bookmarks:
-            BookmarksPanel(browser: browser, bookmarks: browser.bookmarks)
+            BookmarksPanel(browser: browser, bookmarks: browser.bookmarks, tabID: tab.id)
         case .passwords:
             // The list is read each time the page is drawn, whichever way it
             // came: brought back from the last session, Settings › Passwords ›

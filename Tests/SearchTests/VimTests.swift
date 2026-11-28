@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import Search
 
@@ -202,8 +203,228 @@ final class VimTests: XCTestCase {
         XCTAssertFalse(browser.onlyBookmarks, "and the next field is as ever")
     }
 
+    // MARK: lists
+
+    func testAListIsWalkedRowByRow() {
+        let list = VimList()
+        list.rows = { ["a", "b", "c"] }
+        list.move(-1)
+        XCTAssertEqual(list.selected, "c", "k from none: the last")
+        list.selected = nil
+        list.move(1)
+        XCTAssertEqual(list.selected, "a", "j from none: the first")
+        list.move(1); list.move(1); list.move(1)
+        XCTAssertEqual(list.selected, "c", "and no further than the last")
+        list.move(-5)
+        XCTAssertEqual(list.selected, "a")
+        list.toEnd(true)
+        XCTAssertEqual(list.selected, "c")
+        list.rows = { ["a", "b"] }
+        list.move(1)
+        XCTAssertEqual(list.selected, "a", "a row gone from the page counts as none")
+    }
+
+    func testAPressIsThePickedRowsAlone() {
+        let list = VimList()
+        list.rows = { ["a", "b"] }
+        XCTAssertFalse(list.press(), "nothing picked: the key goes on")
+        XCTAssertNil(list.press(for: "a"))
+        list.selected = "a"
+        XCTAssertNil(list.press(for: "a"), "picked is no press")
+        XCTAssertTrue(list.press())
+        let first = list.press(for: "a")
+        XCTAssertNotNil(first, "the row's controls hear it")
+        XCTAssertNil(list.press(for: "b"), "another row's don't")
+        list.selected = "b"
+        XCTAssertNil(list.press(for: "b"), "nor a row picked after it")
+        list.selected = "a"
+        list.activate = { $0 == "a" }
+        XCTAssertTrue(list.press())
+        XCTAssertEqual(list.press(for: "a"), first, "a row the page did itself is no control's press")
+    }
+
+    func testTheTabInFrontHasItsList() {
+        let browser = browser()
+        defer { browser.closeAll() }
+        let mine = VimList(), other = VimList()
+        mine.tab = browser.activeID
+        other.tab = UUID()
+        browser.vim.register(mine)
+        browser.vim.register(other)
+        XCTAssertTrue(browser.vim.list === mine)
+        let again = VimList()
+        again.tab = browser.activeID
+        browser.vim.register(again)
+        XCTAssertTrue(browser.vim.list === again, "the page drawn again takes its tab's place")
+        again.letGo()
+        XCTAssertNil(browser.vim.list, "gone, it has no tab")
+    }
+
+    func testListKeysWalkInsteadOfScrolling() {
+        let browser = browser()
+        defer { browser.closeAll() }
+        let list = VimList()
+        list.tab = browser.activeID
+        list.rows = { ["a", "b", "c"] }
+        var sections: [Int] = []
+        list.section = { sections.append($0) }
+        browser.vim.register(list)
+        XCTAssertTrue(browser.vim.take(key("j", code: 38), typing: false))
+        XCTAssertEqual(list.selected, "a")
+        _ = browser.vim.take(key("G", code: 5, flags: .shift, ignoring: "g"), typing: false)
+        XCTAssertEqual(list.selected, "c")
+        _ = browser.vim.take(key("l", code: 37), typing: false)
+        _ = browser.vim.take(key("h", code: 4), typing: false)
+        XCTAssertEqual(sections, [1, -1])
+        XCTAssertTrue(browser.vim.take(key("\r", code: 36), typing: false), "Return presses the row")
+        XCTAssertFalse(browser.vim.take(key("\r", code: 36, flags: .command), typing: false), "⌘Return is Search's")
+        XCTAssertTrue(browser.vim.take(key("\u{1b}", code: 53), typing: false))
+        XCTAssertNil(list.selected, "Escape lets go of the row")
+        XCTAssertFalse(browser.vim.take(key("\r", code: 36), typing: false), "no row: Return goes on")
+        XCTAssertFalse(browser.vim.take(key("j", code: 38), typing: true), "in Find a setting, j is typed")
+    }
+
+    func testSettingsRowsAreWhatThePageDraws() {
+        let prefs = Preferences()
+        let rows = SettingsPanel.vimRows(page: .keyboard, query: "", advancedOpen: [], prefs: prefs)
+        XCTAssertTrue(rows.contains("vim.keys"))
+        XCTAssertEqual(rows.last, SettingsPanel.advancedRow, "Advanced folded: its fold, last")
+        XCTAssertFalse(rows.contains("keys.backspaceBack"), "under the fold")
+        let open = SettingsPanel.vimRows(page: .keyboard, query: "", advancedOpen: [.keyboard], prefs: prefs)
+        XCTAssertTrue(open.contains("keys.backspaceBack"))
+        XCTAssertEqual(Set(rows).count, rows.count, "no row twice")
+        prefs.vimKeys = false
+        XCTAssertFalse(SettingsPanel.vimRows(page: .keyboard, query: "", advancedOpen: [], prefs: prefs).contains("vim.hints"),
+                       "a row that doesn't count isn't drawn")
+        prefs.vimKeys = true
+        XCTAssertTrue(SettingsPanel.vimRows(page: .keyboard, query: "", advancedOpen: [], prefs: prefs).contains("vim.hints"))
+        prefs.vimKeys = false
+        XCTAssertEqual(SettingsPanel.vimRows(page: .extensions, query: "", advancedOpen: [], prefs: prefs), [],
+                       "a section drawn its own way: none, j and k scroll it")
+        XCTAssertTrue(SettingsPanel.vimRows(page: .general, query: "vimium", advancedOpen: [], prefs: prefs).contains("vim.keys"),
+                      "searching: the rows found, whatever the page")
+    }
+
+    func testHAndLWalkTheBookmarkTree() {
+        let bookmarks = Bookmarks(file: "bookmarks-vim-tree-\(UUID().uuidString).json")
+        defer { bookmarks.retire() }
+        let folder = bookmarks.insert(.folder("Work", []), into: nil)
+        let inside = bookmarks.insert(.site("Mail", URL(string: "https://mail.example/")!), into: folder.id)
+        let top = bookmarks.add(URL(string: "https://top.example/")!, title: "Top")!
+        var open: Set<Bookmark.ID> = []
+        XCTAssertEqual(BookmarksPanel.sideways(1, from: folder.id, in: bookmarks, expanded: &open), folder.id)
+        XCTAssertEqual(open, [folder.id], "l opens a folder")
+        XCTAssertEqual(BookmarksPanel.sideways(1, from: folder.id, in: bookmarks, expanded: &open), inside.id,
+                       "l on an open folder: the first thing in it")
+        XCTAssertEqual(BookmarksPanel.sideways(-1, from: inside.id, in: bookmarks, expanded: &open), folder.id,
+                       "h in a folder: up to it")
+        XCTAssertEqual(open, [folder.id], "and it stays open")
+        XCTAssertEqual(BookmarksPanel.sideways(-1, from: folder.id, in: bookmarks, expanded: &open), folder.id)
+        XCTAssertEqual(open, [], "h closes an open folder")
+        XCTAssertEqual(BookmarksPanel.sideways(1, from: top.id, in: bookmarks, expanded: &open), top.id, "l on a bookmark: nothing")
+        XCTAssertEqual(BookmarksPanel.sideways(-1, from: top.id, in: bookmarks, expanded: &open), top.id, "h at the top level: nothing")
+    }
+
+    /// A press reaches the picked row's control, drawn as Settings draws
+    /// one, with the page around it never drawn again.
+    func testAPressReachesThePickedRowsControl() {
+        let list = VimList()
+        list.rows = { ["a", "b"] }
+        let seen = Pressed()
+        let host = NSHostingView(rootView: VStack {
+            PressedRow(seen: seen, name: "a").vimRow("a", in: list)
+            PressedRow(seen: seen, name: "b").vimRow("b", in: list)
+        })
+        host.frame = CGRect(x: 0, y: 0, width: 300, height: 200)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: true)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.15)) }
+        settle()
+        list.selected = "b"
+        settle()
+        XCTAssertEqual(seen.names, [], "picked is no press")
+        XCTAssertTrue(list.press())
+        settle()
+        XCTAssertEqual(seen.names, ["b"])
+        _ = list.press()
+        settle()
+        XCTAssertEqual(seen.names, ["b", "b"])
+        // Picked and pressed before the row is drawn again: still its press, once.
+        list.selected = "a"
+        _ = list.press()
+        settle()
+        XCTAssertEqual(seen.names, ["b", "b", "a"])
+        settle()
+        XCTAssertEqual(seen.names, ["b", "b", "a"], "once")
+    }
+
+    /// The row lit is the row picked, at every key, in a list that keeps
+    /// it in sight: lit a key late, j showed nothing at first and k went
+    /// down one more before going up.
+    func testTheRowLitIsThePickedOneAtEveryKey() {
+        let list = VimList()
+        let names = (0..<30).map { "r\($0)" }
+        list.rows = { names }
+        let drawn = Drawn()
+        let host = NSHostingView(rootView: ScrollViewReader { reader in
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(names, id: \.self) { name in
+                        LitRow(name: name, list: list, drawn: drawn).frame(height: 30).id(name)
+                    }
+                }
+            }
+            .vimKeepsInSight(list, with: reader)
+        })
+        host.frame = CGRect(x: 0, y: 0, width: 300, height: 200)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: true)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.2)) }
+        settle()
+        for step in [1, 1, 1, 1, 1, -1, -1] {
+            list.move(step)
+            settle()
+            XCTAssertEqual(drawn.lit, list.selected.map { [$0] } ?? [], "after \(step > 0 ? "j" : "k")")
+        }
+    }
+
     func testEveryCommandHasADefaultKey() {
-        XCTAssertEqual(Set(VimCommand.defaults.values), Set(VimCommand.allCases))
+        let keys = Set(VimCommand.defaults.values).union(VimCommand.defaults(column: false, rows: true).values)
+        XCTAssertEqual(keys, Set(VimCommand.allCases))
+    }
+
+    func testDdIsAListsOnly() {
+        XCTAssertNil(VimCommand.defaults["dd"])
+        XCTAssertEqual(VimCommand.defaults["d"], .scrollPageDown)
+        var rows = VimSequence(map: VimCommand.defaults(column: false, rows: true))
+        XCTAssertEqual(rows.feed("d"), .pending)
+        XCTAssertEqual(rows.feed("d"), .run(.removeRow))
+        XCTAssertEqual(rows.feed("u"), .run(.scrollPageUp))
+    }
+
+    func testAListsRowKeys() {
+        let browser = browser()
+        defer { browser.closeAll() }
+        let list = VimList()
+        list.tab = browser.activeID
+        var rows = ["a", "b", "c"]
+        list.rows = { rows }
+        var opened: [String] = [], found = 0
+        list.openInNewTab = { opened.append($0) }
+        list.remove = { id in rows.removeAll { $0 == id } }
+        list.find = { found += 1 }
+        browser.vim.register(list)
+        _ = browser.vim.take(key("/", code: 26, flags: .shift, ignoring: "7"), typing: false)
+        XCTAssertEqual(found, 1, "/ is the list's own find")
+        _ = browser.vim.take(key("j", code: 38), typing: false)
+        _ = browser.vim.take(key("O", code: 31, flags: .shift, ignoring: "o"), typing: false)
+        XCTAssertEqual(opened, ["a"])
+        XCTAssertTrue(browser.vim.take(key("d", code: 2), typing: false))
+        XCTAssertEqual(browser.vim.pending, "d", "d waits for the second")
+        _ = browser.vim.take(key("d", code: 2), typing: false)
+        XCTAssertEqual(rows, ["b", "c"])
     }
 
     // MARK: modes
@@ -283,5 +504,36 @@ final class VimTests: XCTestCase {
     func testOffUntilTurnedOn() {
         Store.settings.removeObject(forKey: "vim.keys")
         XCTAssertFalse(Preferences().vimKeys)
+    }
+}
+
+@MainActor
+private final class Pressed {
+    var names: [String] = []
+}
+
+private struct PressedRow: View {
+    let seen: Pressed
+    let name: String
+    var body: some View {
+        Text(name).onVimPress { seen.names.append(name) }
+    }
+}
+
+@MainActor
+private final class Drawn {
+    var shown: [String: Bool] = [:]
+    var lit: [String] { shown.filter(\.value).map(\.key).sorted() }
+}
+
+/// A row that says, each time it is drawn, whether it was drawn picked.
+private struct LitRow: View {
+    let name: String
+    @ObservedObject var list: VimList
+    let drawn: Drawn
+    var body: some View {
+        let picked = list.selected == name
+        drawn.shown[name] = picked
+        return Text(name).vimRow(name, in: list)
     }
 }
