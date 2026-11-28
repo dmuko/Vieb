@@ -875,6 +875,7 @@ struct BookmarkOutline: View {
             } : nil,
             remove: { bookmarks.askRemove(node) }
         )
+        .vimRow(node.id.uuidString)
         .id(node.id)
         .overlay {
             if let url = node.url.flatMap(URL.init(string:)) {
@@ -1444,6 +1445,12 @@ struct BookmarksDropdown: View {
 struct BookmarksPanel: View {
     @ObservedObject var browser: Browser
     let bookmarks: Bookmarks
+    /// The tab it is drawn in, for Vim's keys (Vim.swift).
+    var tabID: UUID? = nil
+    /// Its rows for Vim's keys to walk, when they are on.
+    // Held, not watched: each row watches it (vimRow), so a key redraws
+    // two rows rather than the whole page.
+    @State private var vim = VimList()
 
     @State private var expanded: Set<Bookmark.ID> = []
     @State private var query = ""
@@ -1487,6 +1494,10 @@ struct BookmarksPanel: View {
                                 withAnimation(Motion.settle) { scroller.scrollTo(id, anchor: .center) }
                             }
                         }
+                        .onReceive(vim.$selected) { id in
+                            guard let id = id.flatMap(UUID.init(uuidString:)) else { return }
+                            withAnimation(Motion.quick) { scroller.scrollTo(id) }
+                        }
                     }
                 }
             }
@@ -1505,7 +1516,61 @@ struct BookmarksPanel: View {
             }
         }
         .animation(Motion.settle, value: query.isEmpty)
-        .onAppear { hunting = true }
+        // With Vim's keys on, the keys are theirs; / finds.
+        .onAppear {
+            if !browser.prefs.vimKeys { hunting = true }
+            walkable()
+        }
+        .onDisappear { vim.letGo() }
+        .onChange(of: query) { _, _ in vim.selected = nil }
+        .environment(\.vimList, vim)
+    }
+
+    /// The rows as Vim's keys walk them (Vim.swift): the outline as it
+    /// shows, or what the search found. Return opens a bookmark here and
+    /// opens or closes a folder, O opens one in a new tab, h and l close
+    /// and open folders as in a file tree, yy copies, dd removes (a folder
+    /// with something in it asks first, as its Remove does).
+    private func walkable() {
+        vim.tab = tabID
+        vim.rows = {
+            if !query.isEmpty { return bookmarks.matches(query).map { $0.node.id.uuidString } }
+            var showing: [BookmarkOutline.Shown] = []
+            BookmarkOutline.lines(bookmarks.roots, expanded: expanded, into: &showing)
+            return showing.filter { !$0.empty }.map { $0.node.id.uuidString }
+        }
+        func node(_ id: String) -> Bookmark? { UUID(uuidString: id).flatMap(bookmarks.bookmark) }
+        func address(_ id: String) -> URL? { node(id)?.url.flatMap(URL.init(string:)) }
+        vim.activate = { id in
+            guard let node = node(id) else { return false }
+            if let url = address(id) {
+                browser.pickBookmark(url)
+            } else if node.isFolder {
+                if !query.isEmpty { show(node) } else if expanded.contains(node.id) { expanded.remove(node.id) } else { expanded.insert(node.id) }
+            }
+            return true
+        }
+        vim.openInNewTab = { id in
+            guard let url = address(id) else { return }
+            browser.bookmarksOpen = false
+            browser.open(url, foreground: true, from: browser.active, mayWait: true)
+        }
+        vim.address = address
+        vim.section = { step in
+            guard query.isEmpty, let id = vim.picked.flatMap(UUID.init(uuidString:)) else { return }
+            let to = BookmarksPanel.sideways(step, from: id, in: bookmarks, expanded: &expanded)
+            vim.selected = to.uuidString
+        }
+        vim.remove = { id in
+            guard let node = node(id) else { return }
+            let rows = vim.rows()
+            let next = rows.firstIndex(of: id).flatMap { rows.indices.contains($0 + 1) ? rows[$0 + 1] : rows.dropLast().last }
+            bookmarks.askRemove(node)
+            // Gone now, not asked about first: the next row in its place.
+            if bookmarks.bookmark(node.id) == nil { vim.selected = next }
+        }
+        vim.find = { hunting = true }
+        browser.vim.register(vim)
     }
 
     /// What the search finds, flat, each with the folders it is in. Nothing
@@ -1516,6 +1581,7 @@ struct BookmarksPanel: View {
         if hits.isEmpty {
             Card { Nothing("Nothing matches.") }
         } else {
+            ScrollViewReader { scroller in
             ScrollView {
                 Card {
                     ForEach(Array(hits.enumerated()), id: \.element.node.id) { index, hit in
@@ -1526,12 +1592,41 @@ struct BookmarksPanel: View {
                             open: hit.node.url.flatMap(URL.init(string:)).map { url in { browser.pickBookmark(url) } },
                             show: { show(hit.node) }
                         )
+                        .vimRow(hit.node.id.uuidString)
+                        .id(hit.node.id)
                     }
                 }
                 .padding(.bottom, 2)
             }
             .listHeight(440)
+            .onReceive(vim.$selected) { id in
+                guard let id = id.flatMap(UUID.init(uuidString:)) else { return }
+                withAnimation(Motion.quick) { scroller.scrollTo(id) }
+            }
+            }
         }
+    }
+
+    /// h and l on a row of the outline, as in a file tree. l opens a folder,
+    /// and on an open one goes to the first thing in it. h closes an open
+    /// folder, and on anything else goes up to the folder it is in. The row
+    /// to pick afterwards.
+    static func sideways(_ step: Int, from id: Bookmark.ID, in bookmarks: Bookmarks,
+                         expanded: inout Set<Bookmark.ID>) -> Bookmark.ID {
+        guard let node = bookmarks.bookmark(id) else { return id }
+        if step > 0 {
+            guard node.isFolder else { return id }
+            if !expanded.contains(id) {
+                expanded.insert(id)
+                return id
+            }
+            return node.children?.first?.id ?? id
+        }
+        if node.isFolder, expanded.contains(id) {
+            expanded.remove(id)
+            return id
+        }
+        return bookmarks.parent(of: id) ?? id
     }
 
     /// Return in the field: the first site found.

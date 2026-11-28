@@ -41,8 +41,14 @@ enum When {
 
 struct HistoryPanel: View {
     @ObservedObject var browser: Browser
+    /// The tab it is drawn in, for Vim's keys (Vim.swift).
+    var tabID: UUID? = nil
 
     @FocusState private var hunting: Bool
+    /// Its pages for Vim's keys to walk, when they are on.
+    // Held, not watched: each row watches it (vimRow), so a key redraws
+    // two rows rather than the whole page.
+    @State private var vim = VimList()
     @State private var traces: [History.Trace] = []
     /// The list as drawn: each day's name, then its pages. Worked out when
     /// the history or the search changes, not each time the panel is drawn.
@@ -56,6 +62,12 @@ struct HistoryPanel: View {
         Plate("History", width: 600, close: { browser.recalling = false }) {
             VStack(alignment: .leading, spacing: 14) {
                 Hunt(text: $browser.recallHunt, prompt: "Search everywhere you have been", focus: $hunting)
+                    // With Vim's keys: Return gives them back, at the first page found.
+                    .onSubmit {
+                        guard browser.prefs.vimKeys else { return }
+                        hunting = false
+                        vim.selected = vim.rows().first
+                    }
 
                 if traces.isEmpty {
                     Card { Nothing(browser.recallHunt.isEmpty ? "Nothing yet." : "Nothing matches.") }
@@ -63,6 +75,7 @@ struct HistoryPanel: View {
                     // Lazy: only the lines in view are made. Two thousand of
                     // them, each with its icon, took the panel a third of a
                     // second to open, and scrolling redrew them all.
+                    ScrollViewReader { reader in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(lines) { line in
@@ -87,6 +100,7 @@ struct HistoryPanel: View {
                                             }
                                         )
                                     }
+                                    .vimRow(trace.id, in: vim)
                                     // A day's card, drawn a line at a time.
                                     .background(Palette.ground)
                                     .clipShape(Slice(first: first, last: last))
@@ -106,6 +120,11 @@ struct HistoryPanel: View {
                         .padding(.bottom, 2)
                     }
                     .listHeight(420)
+                    .onReceive(vim.$selected) { id in
+                        guard let id else { return }
+                        withAnimation(Motion.quick) { reader.scrollTo(id) }
+                    }
+                    }
                 }
             }
         } foot: {
@@ -123,12 +142,47 @@ struct HistoryPanel: View {
         }
         .animation(Motion.settle, value: clearing)
         .onAppear {
-            hunting = true
+            // With Vim's keys on, the keys are theirs; / finds.
+            if !browser.prefs.vimKeys { hunting = true }
             refresh()
+            walkable()
         }
+        .onDisappear { vim.letGo() }
         .onChange(of: browser.recallHunt) { _, _ in refresh() }
         // Another space may keep a history of its own (Spaces.history).
         .onChange(of: browser.spaceID) { _, _ in refresh() }
+    }
+
+    /// The pages as Vim's keys walk them (Vim.swift): Return opens one here,
+    /// O in a new tab, yy copies its address, dd forgets it.
+    private func walkable() {
+        vim.tab = tabID
+        func trace(_ id: String) -> History.Trace? { traces.first { $0.id == id } }
+        vim.rows = { clearing ? [] : traces.isEmpty ? [] : lines.compactMap { line in
+            if case .trace(let trace, _, _) = line.kind { return trace.id }
+            return nil
+        } }
+        vim.activate = { id in
+            guard let trace = trace(id) else { return false }
+            (browser.pageTab(.history) ?? browser.active)?.go(to: trace.url)
+            return true
+        }
+        vim.openInNewTab = { id in
+            guard let trace = trace(id) else { return }
+            browser.open(trace.url, foreground: true, from: browser.active)
+        }
+        vim.address = { trace($0)?.url }
+        vim.remove = { id in
+            guard let trace = trace(id) else { return }
+            // The next row picked in its place, as a list does.
+            let rows = vim.rows()
+            let next = rows.firstIndex(of: id).flatMap { rows.indices.contains($0 + 1) ? rows[$0 + 1] : rows.dropLast().last }
+            browser.history.forget(trace.key)
+            refresh()
+            vim.selected = next
+        }
+        vim.find = { hunting = true }
+        browser.vim.register(vim)
     }
 
     /// Three separate things, worded so nobody has to guess which one signs
@@ -278,17 +332,60 @@ struct DownloadsPanel: View {
     /// its own title line and cross instead of the plate's.
     let compact: Bool
     let close: (() -> Void)?
+    /// The tab it is drawn in, for Vim's keys (Vim.swift); none under the
+    /// button or in the side panel.
+    let tabID: UUID?
+    /// Its downloads for Vim's keys to walk, when they are on.
+    // Held, not watched: each row watches it (vimRow), so a key redraws
+    // two rows rather than the whole page.
+    @State private var vim = VimList()
 
-    init(browser: Browser, loot: Loot, compact: Bool = false, close: (() -> Void)? = nil) {
+    init(browser: Browser, loot: Loot, compact: Bool = false, close: (() -> Void)? = nil, tabID: UUID? = nil) {
         self.browser = browser
         self.loot = loot
         self.fetches = browser.fetches
         self.compact = compact
         self.close = close
+        self.tabID = tabID
     }
 
     var body: some View {
-        if compact { small } else { plate }
+        Group { if compact { small } else { plate } }
+            .onAppear { if tabID != nil { walkable() } }
+            .onDisappear { vim.letGo() }
+    }
+
+    /// The downloads as Vim's keys walk them (Vim.swift). One under way:
+    /// Return pauses, resumes or tries it again, dd stops it. One done:
+    /// Return opens the file, O shows it in the Finder, yy copies where it
+    /// came from, dd takes it off the list (the file stays).
+    private func walkable() {
+        vim.tab = tabID
+        vim.rows = { fetches.entries.map { "fetch:\($0.id)" } + loot.kept.map { "kept:" + $0.id } }
+        func entry(_ id: String) -> FetchEntry? { fetches.entries.first { "fetch:\($0.id)" == id } }
+        func keep(_ id: String) -> Keep? { loot.kept.first { "kept:" + $0.id == id } }
+        vim.activate = { id in
+            if let keep = keep(id) {
+                if keep.stillThere { loot.open(keep) }
+                return true
+            }
+            guard let entry = entry(id) else { return false }
+            switch entry.state {
+            case .paused: browser.resumeDownload(entry)
+            case .failed: browser.retryDownload(entry)
+            default: browser.pauseDownload(entry)
+            }
+            return true
+        }
+        vim.openInNewTab = { id in if let keep = keep(id) { loot.reveal(keep) } }
+        vim.address = { id in keep(id)?.address.flatMap(URL.init(string:)) }
+        vim.remove = { id in
+            let rows = vim.rows()
+            let next = rows.firstIndex(of: id).flatMap { rows.indices.contains($0 + 1) ? rows[$0 + 1] : rows.dropLast().last }
+            if let keep = keep(id) { loot.forget(keep) } else if let entry = entry(id) { browser.cancelDownload(entry) }
+            vim.selected = next
+        }
+        browser.vim.register(vim)
     }
 
     private var small: some View {
@@ -344,6 +441,7 @@ struct DownloadsPanel: View {
         if fetches.entries.isEmpty && loot.kept.isEmpty {
             Card { Nothing("Nothing downloaded yet.") }
         } else {
+            ScrollViewReader { reader in
             FadingScroll {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if !fetches.entries.isEmpty {
@@ -359,6 +457,8 @@ struct DownloadsPanel: View {
                                         retry: { browser.retryDownload(entry) },
                                         cancel: { browser.cancelDownload(entry) }
                                     )
+                                    .vimRow("fetch:\(entry.id)", in: vim)
+                                    .id("fetch:\(entry.id)")
                                 }
                             }
                         }
@@ -376,6 +476,8 @@ struct DownloadsPanel: View {
                                         reveal: { loot.reveal(keep) },
                                         forget: { loot.forget(keep) }
                                     )
+                                    .vimRow("kept:" + keep.id, in: vim)
+                                    .id("kept:" + keep.id)
                                 }
                             }
                         }
@@ -387,6 +489,11 @@ struct DownloadsPanel: View {
             // icons, not text, at the inset a rule would start from.
             .environment(\.ruleInset, 0)
             .listHeight(420)
+            .onReceive(vim.$selected) { id in
+                guard let id else { return }
+                withAnimation(Motion.quick) { reader.scrollTo(id) }
+            }
+            }
         }
     }
 
