@@ -32,6 +32,13 @@ enum VimCommand: String, CaseIterable {
     case linkHints = "LinkHints.activateMode"
     case linkHintsNewTab = "LinkHints.activateModeToOpenInNewTab"
     case focusInput
+    case openField = "Vomnibar.activate"
+    case openFieldNewTab = "Vomnibar.activateInNewTab"
+    case openBookmarks = "Vomnibar.activateBookmarks"
+    case openBookmarksNewTab = "Vomnibar.activateBookmarksInNewTab"
+    case openTabs = "Vomnibar.activateTabSelection"
+    case editAddress = "Vomnibar.activateEditUrl"
+    case editAddressNewTab = "Vomnibar.activateEditUrlInNewTab"
 
     /// Vimium's own keys for them, made for a row of tabs across the top:
     /// K goes right, J left.
@@ -47,7 +54,15 @@ enum VimCommand: String, CaseIterable {
         "i": .enterInsertMode,
         "?": .showHelp,
         "f": .linkHints, "F": .linkHintsNewTab, "gi": .focusInput,
+        "o": .openField, "O": .openFieldNewTab, "b": .openBookmarks, "B": .openBookmarksNewTab,
+        "T": .openTabs, "ge": .editAddress, "gE": .editAddressNewTab,
     ]
+
+    /// Up and down a list of suggestions with the caret still in its field
+    /// (the address field's, ⌘K's), as in Vimium's: ⌃J and ⌃N down, ⌃K and
+    /// ⌃P up. Not mappable, and only while a list is up, so ⌃K still takes
+    /// the rest of the line in a field with none.
+    static let listSteps: [String: Int] = ["<c-j>": 1, "<c-n>": 1, "<c-k>": -1, "<c-p>": -1]
 
     /// The keys for the way the tabs run. Down a column, J goes down to
     /// the tab below and K up to the one above, as j and k move in Vim;
@@ -102,11 +117,18 @@ enum VimCommand: String, CaseIterable {
         case .linkHints: "Click a link or button"
         case .linkHintsNewTab: "Open a link in a new tab"
         case .focusInput: "Type in the first field"
+        case .openField: "Open an address or search"
+        case .openFieldNewTab: "Open in a new tab"
+        case .openBookmarks: "Open a bookmark"
+        case .openBookmarksNewTab: "Open a bookmark in a new tab"
+        case .openTabs: "Switch to an open tab"
+        case .editAddress: "Edit the address"
+        case .editAddressNewTab: "Edit the address into a new tab"
         }
     }
 
     enum Group: String, CaseIterable {
-        case page = "Page", links = "Links", tabs = "Tabs", find = "Find", other = "Other"
+        case page = "Page", links = "Links", opening = "Opening", tabs = "Tabs", find = "Find", other = "Other"
     }
 
     var group: Group {
@@ -116,6 +138,8 @@ enum VimCommand: String, CaseIterable {
         case .nextTab, .previousTab, .firstTab, .lastTab, .removeTab, .restoreTab, .createTab, .duplicateTab: .tabs
         case .enterFindMode, .performFind, .performBackwardsFind: .find
         case .linkHints, .linkHintsNewTab, .focusInput: .links
+        case .openField, .openFieldNewTab, .openBookmarks, .openBookmarksNewTab, .openTabs, .editAddress,
+             .editAddressNewTab: .opening
         case .enterInsertMode, .showHelp: .other
         }
     }
@@ -240,6 +264,12 @@ final class VimKeys: ObservableObject {
             sequence = VimSequence(map: VimCommand.defaults(column: column))
             pending = ""
         }
+        // ⌃J and the rest in a list's field: before everything, since the
+        // caret is in a field and every other key is the field's.
+        if let name, let step = VimCommand.listSteps[name], browser.walksList(from: event) {
+            browser.walk(step)
+            return true
+        }
 
         if helping {
             helping = false
@@ -338,6 +368,13 @@ final class VimKeys: ObservableObject {
         case .linkHints: showHints(in: browser, newTab: false)
         case .linkHintsNewTab: showHints(in: browser, newTab: true)
         case .focusInput: VimPage.page(browser)?.evaluateInSearch(VimPage.focusInput)
+        case .openField: browser.edit()
+        case .openFieldNewTab: browser.launch()
+        case .openBookmarks: browser.openBookmarksField(newTab: false)
+        case .openBookmarksNewTab: browser.openBookmarksField(newTab: true)
+        case .openTabs: browser.summon()
+        case .editAddress: browser.editAddress(newTab: false)
+        case .editAddressNewTab: browser.editAddress(newTab: true)
         }
     }
 

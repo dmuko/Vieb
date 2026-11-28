@@ -3590,15 +3590,18 @@ final class Bench {
             // Reports whether Search took it and Vim's state after. Only on
             // a SEARCH_PROBE run.
             guard Store.testing else { answer(["error": "vimkey only works on a --test run"]); return }
-            guard let tab = browser.active, let web = tab.built, let window = web.window,
+            // A blank tab has no page, only its field: the key goes to the
+            // window's handling alone.
+            let web = browser.active?.built
+            guard let window = web?.window ?? browser.window,
                   let chars = request["chars"] as? String, let code = request["code"] as? Int
-            else { answer(["error": "vimkey needs a loaded tab, the characters and the key code"]); return }
+            else { answer(["error": "vimkey needs a window, the characters and the key code"]); return }
             var flags: NSEvent.ModifierFlags = []
             let mods = request["mods"] as? [String] ?? []
             if mods.contains("shift") { flags.insert(.shift) }
             if mods.contains("option") { flags.insert(.option) }
             if mods.contains("control") { flags.insert(.control) }
-            if request["keepFocus"] as? Bool != true, !(window.firstResponder is NSTextView) {
+            if let web, request["keepFocus"] as? Bool != true, !(window.firstResponder is NSTextView) {
                 window.makeFirstResponder(web)
             }
             guard let event = NSEvent.keyEvent(
@@ -3608,7 +3611,7 @@ final class Bench {
                 isARepeat: request["repeat"] as? Bool == true, keyCode: UInt16(code)
             ) else { answer(["error": "no event"]); return }
             let taken = ContentView.keyHooks[ObjectIdentifier(browser)]?(event) == nil
-            if !taken, window.firstResponder === web { web.keyDown(with: event) }
+            if !taken, let web, window.firstResponder === web { web.keyDown(with: event) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 answer(["taken": taken, "pending": browser.vim.pending, "inserting": browser.vim.inserting,
                         "helping": browser.vim.helping, "finding": browser.finding,
