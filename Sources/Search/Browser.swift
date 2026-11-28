@@ -226,8 +226,9 @@ final class Browser: NSObject, ObservableObject {
             guard newValue else { return putAway(.settings) }
             show(InternalPage(.settings, settingsPage.rawValue))
             // Already open: its Find a setting takes the keys again, as it
-            // does as Settings first opens (SettingsPanel).
-            settingsFind += 1
+            // does as Settings first opens (SettingsPanel). Not with Vim's
+            // keys on: they are the keys there, and / finds.
+            if !prefs.vimKeys { settingsFind += 1 }
         }
     }
     /// The first-launch walk-through, over everything. Also from the menu.

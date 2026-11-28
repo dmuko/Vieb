@@ -220,9 +220,24 @@ final class VimKeys: ObservableObject {
     /// The keys as they are now, for the list of keys.
     var map: [String: VimCommand] { sequence.map }
     private var expiry: DispatchWorkItem?
+    /// Search's own pages with rows to walk, each saying its tab.
+    private let lists = NSHashTable<VimList>.weakObjects()
 
     init(browser: Browser) {
         self.browser = browser
+    }
+
+    /// A page of Search's own with rows (Settings), as it appears: in
+    /// place of any its tab had before.
+    func register(_ list: VimList) {
+        for old in lists.allObjects where old !== list && old.tab == list.tab { lists.remove(old) }
+        lists.add(list)
+    }
+
+    /// The rows of the tab in front, if it is such a page.
+    var list: VimList? {
+        guard let id = browser?.activeID, browser?.peekInFront != true else { return nil }
+        return lists.allObjects.first { $0.tab == id }
     }
 
     /// Whether the page in front has every key (i).
@@ -283,6 +298,15 @@ final class VimKeys: ObservableObject {
             insertTab = nil
             return true
         }
+        // Return and Space press the picked row; Escape lets go of it.
+        if !typing, sequence.typed.isEmpty, let list {
+            let plain = event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+            if plain, [36, 49, 76].contains(event.keyCode), list.press() { return true }
+            if name == "<esc>", list.selected != nil {
+                list.selected = nil
+                return true
+            }
+        }
         if typing || name == nil {
             clear()
             return false
@@ -338,6 +362,7 @@ final class VimKeys: ObservableObject {
     }
 
     private func run(_ command: VimCommand, in browser: Browser, repeating: Bool) {
+        if let list, walk(list, command) { return }
         let step = VimPage.step
         switch command {
         case .scrollDown: VimPage.scroll(browser, .by(dx: 0, dy: step), smooth: !repeating)
@@ -376,6 +401,25 @@ final class VimKeys: ObservableObject {
         case .editAddress: browser.editAddress(newTab: false)
         case .editAddressNewTab: browser.editAddress(newTab: true)
         }
+    }
+
+    /// The keys that scroll a page walk a list's rows instead, and h and l
+    /// go from section to section. With no rows (a section drawn its own
+    /// way), j and k scroll it as any other.
+    private func walk(_ list: VimList, _ command: VimCommand) -> Bool {
+        let rows = !list.rows().isEmpty
+        switch command {
+        case .scrollDown where rows: list.move(1)
+        case .scrollUp where rows: list.move(-1)
+        case .scrollPageDown where rows: list.move(5)
+        case .scrollPageUp where rows: list.move(-5)
+        case .scrollToTop where rows: list.toEnd(false)
+        case .scrollToBottom where rows: list.toEnd(true)
+        case .scrollLeft: list.section(-1)
+        case .scrollRight: list.section(1)
+        default: return false
+        }
+        return true
     }
 
     // MARK: hints
@@ -874,5 +918,140 @@ struct VimHintField: View {
             .padding(.vertical, 5)
             .background(Palette.wash, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .onSubmit { if text.isEmpty { text = Preferences.vimHintDefault } }
+    }
+}
+
+// MARK: - lists of Search's own
+
+/// The rows of one of Search's own pages (Settings), for Vim's keys to walk:
+/// j and k go from row to row, h and l from section to section, Return and
+/// Space press the row's control, Escape lets go of the row. / is the
+/// page's own find (Browser.openFind), as ⌘F.
+/// The page says what its rows are now; the keys say which is picked.
+@MainActor
+final class VimList: ObservableObject {
+    /// The tab the page is drawn in: only the tab in front has the keys.
+    var tab: Tab.ID?
+    /// The row picked, by its id, lit and kept in sight by the page.
+    @Published var selected: String?
+    /// Bumped by Return and Space: the picked row's control acts.
+    @Published private(set) var presses = 0
+    /// Which press a control has already acted on, so one press is one
+    /// control's, never every control of the row's.
+    let claim = VimPress.Claim()
+
+    /// The rows the page draws now, in their order.
+    var rows: () -> [String] = { [] }
+    /// h and l: the section before or after.
+    var section: (Int) -> Void = { _ in }
+    /// Return on a row with no control of the usual kinds (a fold): true
+    /// when the page did it itself.
+    var activate: (String) -> Bool = { _ in false }
+
+    /// Down or up so many rows. From none picked, j takes the first, k the
+    /// last; a picked row gone from the page counts as none.
+    func move(_ step: Int) {
+        let rows = rows()
+        guard !rows.isEmpty else { return }
+        guard let here = selected.flatMap(rows.firstIndex(of:)) else {
+            selected = step > 0 ? rows.first : rows.last
+            return
+        }
+        selected = rows[min(max(here + step, 0), rows.count - 1)]
+    }
+
+    func toEnd(_ last: Bool) {
+        let rows = rows()
+        selected = last ? rows.last : rows.first
+    }
+
+    /// Return or Space. False with no row picked, for the key to go on.
+    func press() -> Bool {
+        guard let selected, rows().contains(selected) else { return false }
+        if !activate(selected) { presses += 1 }
+        return true
+    }
+
+    /// The page gone: what it said of itself let go of, and the keys with
+    /// it. The closures hold the page, which holds this.
+    func letGo() {
+        tab = nil
+        selected = nil
+        rows = { [] }
+        section = { _ in }
+        activate = { _ in false }
+    }
+
+    /// What a row's controls are told: a press, only on the row picked.
+    func press(for id: String) -> VimPress? {
+        selected == id ? VimPress(count: presses, claim: claim) : nil
+    }
+}
+
+/// Return or Space on a row Vim's keys picked, as its controls see it.
+struct VimPress: Equatable {
+    let count: Int
+    let claim: Claim
+
+    final class Claim {
+        var taken = -1
+    }
+
+    static func == (a: VimPress, b: VimPress) -> Bool { a.count == b.count && a.claim === b.claim }
+}
+
+private struct VimPressKey: EnvironmentKey {
+    static let defaultValue: VimPress? = nil
+}
+
+extension EnvironmentValues {
+    var vimPress: VimPress? {
+        get { self[VimPressKey.self] }
+        set { self[VimPressKey.self] = newValue }
+    }
+}
+
+/// A control acting on a press of its row's: the first in the row to hear
+/// it takes it. A row just picked is no press.
+private struct VimPressed: ViewModifier {
+    @Environment(\.vimPress) private var press
+    let act: () -> Void
+
+    func body(content: Content) -> some View {
+        content.onChange(of: press) { old, new in
+            guard let old, let new, new.count != old.count, new.claim.taken != new.count else { return }
+            new.claim.taken = new.count
+            act()
+        }
+    }
+}
+
+/// The row Vim's keys have picked: the accent, faint under it and drawn
+/// round it, the same in light and dark, in place of the focus ring.
+private struct VimRowMark: ViewModifier {
+    let picked: Bool
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if picked {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.10))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1.5))
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+extension View {
+    /// What the control does when Return or Space presses its row.
+    func onVimPress(_ act: @escaping () -> Void) -> some View { modifier(VimPressed(act: act)) }
+
+    /// A row Vim's keys walk to: lit while picked, its controls told of
+    /// presses.
+    func vimRow(_ id: String, in list: VimList?) -> some View {
+        modifier(VimRowMark(picked: list?.selected == id))
+            .environment(\.vimPress, list?.press(for: id))
     }
 }

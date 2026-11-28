@@ -24,7 +24,7 @@ sv.use("vim-keys")
 t = sv.T()
 
 CODES = {"f": 3, "F": 3, "s": 1, "e": 14, "h": 4, "j": 38, "k": 40, "d": 2, "u": 32, "g": 5, "G": 5, "K": 40, "J": 38, "i": 34, "x": 7, "/": 26, "?": 27, "a": 0,
-         "o": 31, "O": 31, "b": 11, "B": 11, "T": 17, "E": 14}
+         "o": 31, "O": 31, "l": 37, "b": 11, "B": 11, "T": 17, "E": 14}
 
 
 def key(ch, mods=None, ignoring=None, settle=0.5):
@@ -220,6 +220,52 @@ try:
     t.ok("hints made of one's own letters", done["hints"] == "" and sv.ev(a, "document.title") == "b2",
          (done, sv.ev(a, "document.title")))
     sv.cmd({"do": "settings", "set": "vim.hints", "value": "sadfjklewcmpgh"}); time.sleep(0.3)
+
+    # Settings: its rows walked as a list, not its find field's keys.
+    sv.cmd({"do": "ui", "settings": True}); time.sleep(1.0)
+    here = sv.cmd({"do": "vimkey", "chars": "z", "code": 6})
+    rows = here["rows"]
+    t.ok("Settings opens with the keys Vim's, not Find a setting's", here["caret"] is False and len(rows) > 3 and here["row"] == "",
+         {k: here[k] for k in ("caret", "row")} | {"rows": len(rows)})
+    t.ok("j picks the first row", key("j")["row"] == rows[0])
+    t.ok("j again the next", key("j")["row"] == rows[1])
+    t.ok("k back up", key("k")["row"] == rows[0])
+    t.ok("G the last", key("G", ignoring="g")["row"] == rows[-1])
+    key("g"); t.ok("gg the first", key("g")["row"] == rows[0])
+    start = here["settingsPage"]
+    moved = key("l", settle=0.8)
+    t.ok("l the next section", moved["settingsPage"] != start and moved["row"] == "", moved["settingsPage"])
+    back = key("h", settle=0.8)
+    t.ok("h back", back["settingsPage"] == start, back["settingsPage"])
+    for _ in range(14):
+        if key("l", settle=0.6)["settingsPage"] == "keyboard": break
+    # The switch is under the page's Advanced fold: Return on the fold opens it.
+    for _ in range(40):
+        if key("j", settle=0.25)["row"] == "vim.advanced": break
+    folded = sv.cmd({"do": "vimkey", "chars": "z", "code": 6})["rows"]
+    opened = sv.cmd({"do": "vimkey", "chars": "\r", "code": 36}); time.sleep(0.4)
+    opened = sv.cmd({"do": "vimkey", "chars": "z", "code": 6})
+    t.ok("Return on Advanced opens it, its rows to walk", "keys.backspaceBack" not in folded
+         and "keys.backspaceBack" in opened["rows"] and opened["row"] == "vim.advanced", (len(folded), len(opened["rows"])))
+    for _ in range(40):
+        if key("j", settle=0.25)["row"] == "keys.backspaceBack": break
+    was = sv.cmd({"do": "settings", "find": "backspace"})["values"].get("keys.backspaceBack")
+    pressed = sv.cmd({"do": "vimkey", "chars": "\r", "code": 36}); time.sleep(0.4)
+    now = sv.cmd({"do": "settings", "find": "backspace"})["values"].get("keys.backspaceBack")
+    t.ok("Return turns the picked switch", pressed["row"] == "keys.backspaceBack" and pressed["taken"] and now is (not was),
+         (pressed["row"], was, now))
+    sv.cmd({"do": "vimkey", "chars": " ", "code": 49}); time.sleep(0.4)
+    t.ok("Space turns it back", sv.cmd({"do": "settings", "find": "backspace"})["values"].get("keys.backspaceBack") is was)
+    t.ok("Escape lets go of the row", key(ESC)["row"] == "")
+    t.ok("/ puts the keys in Find a setting", key("/", mods=["shift"], ignoring="7")["caret"] is True)
+    for ch, code in (("v", 9), ("i", 34), ("m", 46)):
+        sv.cmd({"do": "vimkey", "chars": ch, "code": code}); time.sleep(0.1)
+    time.sleep(0.4)
+    found = sv.cmd({"do": "vimkey", "chars": "\r", "code": 36})
+    t.ok("Return there gives the keys back, at the first row found", found["caret"] is False and found["row"] == found["rows"][0]
+         and "vim.keys" in found["rows"], {k: found[k] for k in ("caret", "row", "rows")})
+    sv.cmd({"do": "ui", "settings": False}); time.sleep(0.6)
+    sv.sp("select", id=a); time.sleep(0.5)
 
     # x closes the tab in front, as ⌘W.
     count = len(sv.sp("state")["tabs"])

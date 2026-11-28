@@ -158,26 +158,43 @@ Asetukset, historia, lataukset ja kirjanmerkit ovat välilehtiä pääikkunassa
 (InternalPages.swift). Kaikki ovat SwiftUI:n `ScrollView` + `LazyVStack`,
 eikä niissä ole valintatilaa. Siksi tehdään yksi yhteinen malli:
 
+Yhteinen malli on luokka `VimList` (Vim.swift), ei protokolla: näkymä
+omistaa sen (`@StateObject`) ja kertoo sulkeumilla, mitä sillä on.
+
 ```swift
-@MainActor protocol VimList: AnyObject {
-    var vimRows: [AnyHashable] { get }        // näkyvät rivit järjestyksessä
-    var vimSelected: AnyHashable? { get set } // korostettu rivi
-    func vimActivate(_ row: AnyHashable, background: Bool) // Enter / o / O
-    func vimAction(_ key: String, on row: AnyHashable) -> Bool // dd, yy, x, p …
-    func vimFind()                            // /
-    func vimSection(_ step: Int) -> Bool      // h / l, jos näkymällä on osioita
+@MainActor final class VimList: ObservableObject {
+    var tab: Tab.ID?                      // välilehti, jossa näkymä on
+    @Published var selected: String?      // korostettu rivi id:nä
+    var rows: () -> [String]              // näkyvät rivit järjestyksessä
+    var section: (Int) -> Void            // h / l
+    var activate: (String) -> Bool        // Return riville, jolla ei ole tavallista säädintä (taitos)
 }
 ```
 
-Rivit merkitään modifierilla `.vimRow(id, in: list)`. Se piirtää korostuksen
-(aksenttivärin tausta ja reunus, sama tyyli molemmissa teemoissa) ja vierittää
-rivin näkyviin `ScrollViewReader`illa. `VimKeys` kysyy `vimSurface()`:lta,
+Näkymä rekisteröi listan `browser.vim.register(_:)`illa, kun se ilmestyy,
+ja `letGo()` vapauttaa sulkeumat, kun se katoaa. `VimKeys.list` on
+etualan välilehden lista. Rivit merkitään `.vimRow(id, in: list)`illa.
+Se piirtää korostuksen (aksenttivärin heikko tausta ja reunus, sama
+molemmissa teemoissa) ja välittää rivin säätimille painalluksen
+ympäristöarvona (`\.vimPress`). Säädin kuuntelee sitä
+`.onVimPress { … }`illa: `Switch` vaihtaa, `Segmented` ja `Pictures`
+siirtyvät seuraavaan vaihtoehtoon, `Pill` painaa itseään. Vain rivin
+ensimmäinen säädin ottaa painalluksen, joten kahden napin rivillä Return
+ei paina molempia. Näkymä vierittää valitun rivin näkyviin
+`ScrollViewReader`illa.
+
+Sivua vierittävät komennot kulkevat listassa: `j/k` rivi, `d/u` viisi
+riviä, `gg/G` ensimmäinen ja viimeinen, `h/l` osio. Kun osiolla ei ole
+rivejä (Extensions, AI, What's New), `j/k` vierittävät sitä kuten ennen.
+`/` on sivun oma haku (`Browser.openFind`, sama kuin ⌘F).
+
+`VimKeys` kysyy `vimSurface()`:lta,
 mikä näkymä on päällimmäisenä, tässä järjestyksessä: dialogi/sheet → popover
 → ⌘K / osoitekenttä → välilehtilista (jos fokuksessa) → sisäinen sivu → verkkosivu.
 
 | Näkymä | Näppäimet |
 |---|---|
-| **Asetukset** | `j/k` rivi, `h/l` osio, `gg/G`, `/` hakukenttä (nykyinen ⌘F), `<cr>`/`<space>` vaihtaa kytkimen tai avaa valinnan, `Esc` poistaa valinnan |
+| **Asetukset** | `j/k` rivi, `h/l` osio, `gg/G`, `/` hakukenttä (nykyinen ⌘F), `<cr>`/`<space>` vaihtaa kytkimen tai avaa valinnan, `Esc` poistaa valinnan. Vim-tilassa hakukenttä ei ota näppäimiä avattaessa; Return hakukentässä palauttaa näppäimet ensimmäiseen löydettyyn riviin. Advanced-taitos on oma rivinsä. Usean rivin asetuksessa jokainen rivi on oma rivinsä. |
 | **Historia, lataukset, kirjanmerkit** | `j/k`, `gg/G`, `/` suodatus, `<cr>` avaa, `O` avaa uuteen välilehteen, `yy` kopioi osoitteen, `dd` poistaa (kirjanmerkeissä vahvistus), `h/l` sulkee/avaa kansion (kirjanmerkit) |
 | **Välilehtilista** (sivupalkki tai ylärivi) | `gs` siirtää fokuksen listaan, sitten `j/k`, `<cr>` valitsee, `x` sulkee, `p` kiinnittää/irrottaa, `Esc` palaa sivulle |
 | **⌘K ja osoitekenttä** | ⌃J/⌃K/⌃N/⌃P → `browser.walk(±1)`, kirjaimet kirjoittuvat normaalisti |

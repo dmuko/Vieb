@@ -60,6 +60,8 @@ struct SettingsPanel: View {
     /// What's New › Worth a look, read once as the section opens: a row
     /// switched on there stays rather than vanishing under the hand.
     @State private var worth: [String]?
+    /// The rows for Vim's keys to walk (Vim.swift), when they are on.
+    @StateObject private var vim = VimList()
 
     enum Page: String, CaseIterable, Identifiable {
         case general, appearance, themes, tabs, browsing, spaces, passwords, privacy, ai, extensions, keyboard, about
@@ -141,13 +143,75 @@ struct SettingsPanel: View {
         // A turn later, once the tab has taken the window's keys.
         .onAppear {
             if let found { query = found } else if let tabID, let kept = browser.settingsQueries[tabID] { query = kept }
-            DispatchQueue.main.async { finding = true }
+            // With Vim's keys on, the keys are theirs (j, k, /), as on a page.
+            if !prefs.vimKeys { DispatchQueue.main.async { finding = true } }
+            walkable()
         }
+        .onDisappear { vim.letGo() }
         .onChange(of: query) { _, words in
             if let tabID { browser.settingsQueries[tabID] = words.isEmpty ? nil : words }
         }
         .onAppear { if page == .whatsNew { sawNews() } }
         .onChange(of: page) { _, page in if page == .whatsNew { sawNews() } }
+        .onChange(of: page) { _, _ in vim.selected = nil }
+        .onChange(of: query) { _, _ in vim.selected = nil }
+    }
+
+    /// The rows as Vim's keys walk them (Vim.swift): what the page draws,
+    /// in its order, a row of several lines by its lines.
+    private func walkable() {
+        vim.tab = tabID
+        vim.rows = { SettingsPanel.vimRows(page: page, query: query, advancedOpen: advancedOpen, prefs: prefs) }
+        vim.section = { step in
+            let order = Page.blocks.flatMap { $0 }
+            guard let here = order.firstIndex(of: page) else { return }
+            query = ""
+            page = order[(here + step + order.count) % order.count]
+        }
+        vim.activate = { id in
+            guard id == SettingsPanel.advancedRow else { return false }
+            withAnimation(Motion.quick) {
+                if advancedOpen.contains(page) { advancedOpen.remove(page) } else { advancedOpen.insert(page) }
+            }
+            return true
+        }
+        browser.vim.register(vim)
+    }
+
+    /// The fold of a page's Advanced, as a row of its own.
+    static let advancedRow = "vim.advanced"
+
+    /// What `rows` and `advanced` draw, by id: found rows that count while
+    /// searching, else the page's groups, its Advanced fold and, open, the
+    /// rows under it. Sections drawn their own way (Extensions, AI, What's
+    /// New) have none, and j and k scroll them.
+    static func vimRows(page: Page, query: String, advancedOpen: Set<Page>, prefs: Preferences) -> [String] {
+        func ids(_ item: SettingsItem) -> [String] {
+            let lines = SettingsIndex.lines(of: item.id).filter { SettingsIndex.applies($0, prefs) }
+            return lines.isEmpty ? [item.id] : lines.map(\.id)
+        }
+        if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            let all = SettingsIndex.find(query).filter { SettingsIndex.applies($0, prefs) }
+            let found = all.filter { $0.kind != .note }
+            let byGroup = Dictionary(grouping: found, by: \.group)
+            let grouped = SettingsIndex.groups.flatMap { byGroup[$0.id] ?? [] }
+            return (grouped + all.filter { $0.kind == .note }).flatMap(ids)
+        }
+        switch page {
+        case .extensions, .ai, .whatsNew: return []
+        default: break
+        }
+        var rows = SettingsIndex.groups(of: page).flatMap { group in
+            SettingsIndex.items(in: group.id).filter { SettingsIndex.applies($0, prefs) }.flatMap(ids)
+        }
+        let advanced = SettingsIndex.advanced(of: page)
+        if !advanced.isEmpty {
+            rows.append(advancedRow)
+            if advancedOpen.contains(page) {
+                rows += advanced.filter { SettingsIndex.applies($0, prefs) }.flatMap(ids)
+            }
+        }
+        return rows
     }
 
     private func sawNews() {
@@ -217,7 +281,12 @@ struct SettingsPanel: View {
                 .padding(.horizontal, 10)
                 .padding(.top, 14)
                 .padding(.bottom, 10)
-            FindField(text: $query, focus: $finding)
+            FindField(text: $query, focus: $finding) {
+                // Return in it: the keys back to Vim's, at the first row found.
+                guard prefs.vimKeys else { return }
+                finding = false
+                DispatchQueue.main.async { vim.selected = vim.rows().first }
+            }
                 .padding(.bottom, 10)
             ForEach(Array(Page.blocks.enumerated()), id: \.offset) { index, block in
                 if index > 0 {
@@ -285,6 +354,8 @@ struct SettingsPanel: View {
     private struct FindField: View {
         @Binding var text: String
         var focus: FocusState<Bool>.Binding
+        /// Return in the field, once the results have what was typed.
+        var submit: () -> Void = {}
         @State private var typed = ""
         @State private var pending: Task<Void, Never>?
 
@@ -331,6 +402,11 @@ struct SettingsPanel: View {
                         // Escape empties it; empty, it lets go of the keys,
                         // for Tab and the arrows to move around Settings.
                         .onExitCommand { if typed.isEmpty { focus.wrappedValue = false } else { typed = "" } }
+                        .onSubmit {
+                            pending?.cancel()
+                            if text != typed { text = typed }
+                            submit()
+                        }
                         .accessibilityLabel("Find a setting")
                 }
                 .font(.system(size: 12.5))
@@ -446,6 +522,11 @@ struct SettingsPanel: View {
                     .frame(maxWidth: .infinity)
                 }
                 .onAppear { if let lit { reader.scrollTo(lit, anchor: .center) } }
+                // The row Vim's keys go to, kept in sight.
+                .onChange(of: vim.selected) { _, id in
+                    guard let id else { return }
+                    withAnimation(Motion.quick) { reader.scrollTo(id) }
+                }
             }
             // A page of its own opens at its top. One scroll view kept for
             // them all opened Tabs as far down as General had been read.
@@ -578,6 +659,7 @@ struct SettingsPanel: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .vimRow(SettingsPanel.advancedRow, in: vim)
                 .accessibilityLabel(open ? "Hide advanced settings" : "Show advanced settings")
                 if open {
                     Card { rows(all.filter(shown), searched: false) }
@@ -623,6 +705,7 @@ struct SettingsPanel: View {
         }
         .disabled(!counts)
         .opacity(counts ? 1 : 0.5)
+        .vimRow(item.id, in: vim)
         .id(item.id)
     }
 
@@ -757,6 +840,8 @@ struct SettingsPanel: View {
                         Text(shortcuts.relabel(title(of: line))).font(.system(size: 12)).foregroundStyle(Palette.ink)
                         pageControl(line)
                     }
+                    .vimRow(line.id, in: vim)
+                    .id(line.id)
                 } else {
                     HStack(spacing: 10) {
                         Text(line.id == "spaces.commandNumbers" ? title(of: line) : shortcuts.relabel(title(of: line)))
@@ -766,6 +851,7 @@ struct SettingsPanel: View {
                         Spacer(minLength: 8)
                         pageControl(line)
                     }
+                    .vimRow(line.id, in: vim)
                     .id(line.id)
                 }
             }
@@ -1685,6 +1771,11 @@ struct Pictures<Option: Hashable>: View {
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
+        // Return on its row: the next picture, round to the first.
+        .onVimPress {
+            guard let here = options.firstIndex(where: { $0.0 == selection }) else { return }
+            withAnimation(Motion.settle) { selection = options[(here + 1) % options.count].0 }
+        }
     }
 }
 
@@ -1877,6 +1968,11 @@ struct Segmented<Option: Hashable>: View {
         .padding(2)
         .background(Palette.wash, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .animation(Motion.settle, value: selection)
+        // Return on its row: the next choice, round to the first.
+        .onVimPress {
+            guard let here = options.firstIndex(where: { $0.0 == selection }) else { return }
+            withAnimation(Motion.settle) { selection = options[(here + 1) % options.count].0 }
+        }
     }
 }
 
@@ -1912,6 +2008,7 @@ struct Switch: View {
             }
             .contentShape(Capsule())
             .onTapGesture { withAnimation(Motion.settle) { on.toggle() } }
+            .onVimPress { withAnimation(Motion.settle) { on.toggle() } }
             .animation(Motion.settle, value: on)
     }
 }
@@ -2004,6 +2101,7 @@ struct Pill: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(Motion.quick, value: hovering)
+        .onVimPress(action)
     }
 }
 

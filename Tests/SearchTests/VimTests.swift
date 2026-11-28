@@ -202,6 +202,105 @@ final class VimTests: XCTestCase {
         XCTAssertFalse(browser.onlyBookmarks, "and the next field is as ever")
     }
 
+    // MARK: lists
+
+    func testAListIsWalkedRowByRow() {
+        let list = VimList()
+        list.rows = { ["a", "b", "c"] }
+        list.move(-1)
+        XCTAssertEqual(list.selected, "c", "k from none: the last")
+        list.selected = nil
+        list.move(1)
+        XCTAssertEqual(list.selected, "a", "j from none: the first")
+        list.move(1); list.move(1); list.move(1)
+        XCTAssertEqual(list.selected, "c", "and no further than the last")
+        list.move(-5)
+        XCTAssertEqual(list.selected, "a")
+        list.toEnd(true)
+        XCTAssertEqual(list.selected, "c")
+        list.rows = { ["a", "b"] }
+        list.move(1)
+        XCTAssertEqual(list.selected, "a", "a row gone from the page counts as none")
+    }
+
+    func testAPressIsThePickedRowsAlone() {
+        let list = VimList()
+        list.rows = { ["a", "b"] }
+        XCTAssertFalse(list.press(), "nothing picked: the key goes on")
+        XCTAssertNil(list.press(for: "a"))
+        list.selected = "a"
+        let before = list.press(for: "a")
+        XCTAssertTrue(list.press())
+        XCTAssertNotEqual(list.press(for: "a"), before, "the row's controls hear it")
+        XCTAssertNil(list.press(for: "b"), "another row's don't")
+        list.activate = { $0 == "a" }
+        let held = list.press(for: "a")
+        XCTAssertTrue(list.press())
+        XCTAssertEqual(list.press(for: "a"), held, "a row the page did itself is no control's press")
+    }
+
+    func testTheTabInFrontHasItsList() {
+        let browser = browser()
+        defer { browser.closeAll() }
+        let mine = VimList(), other = VimList()
+        mine.tab = browser.activeID
+        other.tab = UUID()
+        browser.vim.register(mine)
+        browser.vim.register(other)
+        XCTAssertTrue(browser.vim.list === mine)
+        let again = VimList()
+        again.tab = browser.activeID
+        browser.vim.register(again)
+        XCTAssertTrue(browser.vim.list === again, "the page drawn again takes its tab's place")
+        again.letGo()
+        XCTAssertNil(browser.vim.list, "gone, it has no tab")
+    }
+
+    func testListKeysWalkInsteadOfScrolling() {
+        let browser = browser()
+        defer { browser.closeAll() }
+        let list = VimList()
+        list.tab = browser.activeID
+        list.rows = { ["a", "b", "c"] }
+        var sections: [Int] = []
+        list.section = { sections.append($0) }
+        browser.vim.register(list)
+        XCTAssertTrue(browser.vim.take(key("j", code: 38), typing: false))
+        XCTAssertEqual(list.selected, "a")
+        _ = browser.vim.take(key("G", code: 5, flags: .shift, ignoring: "g"), typing: false)
+        XCTAssertEqual(list.selected, "c")
+        _ = browser.vim.take(key("l", code: 37), typing: false)
+        _ = browser.vim.take(key("h", code: 4), typing: false)
+        XCTAssertEqual(sections, [1, -1])
+        XCTAssertTrue(browser.vim.take(key("\r", code: 36), typing: false), "Return presses the row")
+        XCTAssertFalse(browser.vim.take(key("\r", code: 36, flags: .command), typing: false), "⌘Return is Search's")
+        XCTAssertTrue(browser.vim.take(key("\u{1b}", code: 53), typing: false))
+        XCTAssertNil(list.selected, "Escape lets go of the row")
+        XCTAssertFalse(browser.vim.take(key("\r", code: 36), typing: false), "no row: Return goes on")
+        XCTAssertFalse(browser.vim.take(key("j", code: 38), typing: true), "in Find a setting, j is typed")
+    }
+
+    func testSettingsRowsAreWhatThePageDraws() {
+        let prefs = Preferences()
+        let rows = SettingsPanel.vimRows(page: .keyboard, query: "", advancedOpen: [], prefs: prefs)
+        XCTAssertTrue(rows.contains("vim.keys"))
+        XCTAssertEqual(rows.last, SettingsPanel.advancedRow, "Advanced folded: its fold, last")
+        XCTAssertFalse(rows.contains("keys.backspaceBack"), "under the fold")
+        let open = SettingsPanel.vimRows(page: .keyboard, query: "", advancedOpen: [.keyboard], prefs: prefs)
+        XCTAssertTrue(open.contains("keys.backspaceBack"))
+        XCTAssertEqual(Set(rows).count, rows.count, "no row twice")
+        prefs.vimKeys = false
+        XCTAssertFalse(SettingsPanel.vimRows(page: .keyboard, query: "", advancedOpen: [], prefs: prefs).contains("vim.hints"),
+                       "a row that doesn't count isn't drawn")
+        prefs.vimKeys = true
+        XCTAssertTrue(SettingsPanel.vimRows(page: .keyboard, query: "", advancedOpen: [], prefs: prefs).contains("vim.hints"))
+        prefs.vimKeys = false
+        XCTAssertEqual(SettingsPanel.vimRows(page: .extensions, query: "", advancedOpen: [], prefs: prefs), [],
+                       "a section drawn its own way: none, j and k scroll it")
+        XCTAssertTrue(SettingsPanel.vimRows(page: .general, query: "vimium", advancedOpen: [], prefs: prefs).contains("vim.keys"),
+                      "searching: the rows found, whatever the page")
+    }
+
     func testEveryCommandHasADefaultKey() {
         XCTAssertEqual(Set(VimCommand.defaults.values), Set(VimCommand.allCases))
     }
