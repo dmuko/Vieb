@@ -61,7 +61,9 @@ struct SettingsPanel: View {
     /// switched on there stays rather than vanishing under the hand.
     @State private var worth: [String]?
     /// The rows for Vim's keys to walk (Vim.swift), when they are on.
-    @StateObject private var vim = VimList()
+    // Held, not watched: each row watches it (vimRow), so a key redraws
+    // two rows rather than the whole page.
+    @State private var vim = VimList()
 
     enum Page: String, CaseIterable, Identifiable {
         case general, appearance, themes, tabs, browsing, spaces, passwords, privacy, ai, extensions, keyboard, about
@@ -523,10 +525,7 @@ struct SettingsPanel: View {
                 }
                 .onAppear { if let lit { reader.scrollTo(lit, anchor: .center) } }
                 // The row Vim's keys go to, kept in sight.
-                .onChange(of: vim.selected) { _, id in
-                    guard let id else { return }
-                    withAnimation(Motion.quick) { reader.scrollTo(id) }
-                }
+                .vimKeepsInSight(vim, with: reader)
             }
             // A page of its own opens at its top. One scroll view kept for
             // them all opened Tabs as far down as General had been read.

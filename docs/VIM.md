@@ -167,7 +167,11 @@ omistaa sen (`@StateObject`) ja kertoo sulkeumilla, mitä sillä on.
     @Published var selected: String?      // korostettu rivi id:nä
     var rows: () -> [String]              // näkyvät rivit järjestyksessä
     var section: (Int) -> Void            // h / l
-    var activate: (String) -> Bool        // Return riville, jolla ei ole tavallista säädintä (taitos)
+    var activate: (String) -> Bool        // Return riville, jolla ei ole tavallista säädintä (taitos, avattava sivu)
+    var find: (() -> Void)?               // /, kun näkymällä on oma hakukenttä
+    var openInNewTab: ((String) -> Void)? // O
+    var address: (String) -> URL?         // yy
+    var remove: ((String) -> Void)?       // dd; kun asetettu, d on dd:n alku
 }
 ```
 
@@ -176,7 +180,10 @@ ja `letGo()` vapauttaa sulkeumat, kun se katoaa. `VimKeys.list` on
 etualan välilehden lista. Rivit merkitään `.vimRow(id, in: list)`illa.
 Se piirtää korostuksen (aksenttivärin heikko tausta ja reunus, sama
 molemmissa teemoissa) ja välittää rivin säätimille painalluksen
-ympäristöarvona (`\.vimPress`). Säädin kuuntelee sitä
+ympäristöarvona (`\.vimPress`). Jokainen rivi tarkkailee listaa itse, joten
+näppäin piirtää uudelleen vain kaksi riviä eikä koko paneelia. Syvällä
+piirretyt rivit (kirjanmerkkipuu) lukevat listan ympäristöstä (`\.vimList`,
+`.vimRow(id)`). Säädin kuuntelee sitä
 `.onVimPress { … }`illa: `Switch` vaihtaa, `Segmented` ja `Pictures`
 siirtyvät seuraavaan vaihtoehtoon, `Pill` painaa itseään. Vain rivin
 ensimmäinen säädin ottaa painalluksen, joten kahden napin rivillä Return
@@ -195,7 +202,7 @@ mikä näkymä on päällimmäisenä, tässä järjestyksessä: dialogi/sheet �
 | Näkymä | Näppäimet |
 |---|---|
 | **Asetukset** | `j/k` rivi, `h/l` osio, `gg/G`, `/` hakukenttä (nykyinen ⌘F), `<cr>`/`<space>` vaihtaa kytkimen tai avaa valinnan, `Esc` poistaa valinnan. Vim-tilassa hakukenttä ei ota näppäimiä avattaessa; Return hakukentässä palauttaa näppäimet ensimmäiseen löydettyyn riviin. Advanced-taitos on oma rivinsä. Usean rivin asetuksessa jokainen rivi on oma rivinsä. |
-| **Historia, lataukset, kirjanmerkit** | `j/k`, `gg/G`, `/` suodatus, `<cr>` avaa, `O` avaa uuteen välilehteen, `yy` kopioi osoitteen, `dd` poistaa (kirjanmerkeissä vahvistus), `h/l` sulkee/avaa kansion (kirjanmerkit) |
+| **Historia, lataukset, kirjanmerkit** | `j/k`, `u` viisi riviä ylös, `gg/G`, `/` haku, `<cr>` avaa tässä välilehdessä, `O` avaa uuteen välilehteen, `yy` kopioi osoitteen, `dd` poistaa (kirjanmerkkikansio, jossa on jotain, kysyy ensin), `h/l` sulkee/avaa kansion tai siirtyy kansioon ja sieltä ulos (kirjanmerkit). Listoissa, joista voi poistaa, `d` on `dd`:n alku eikä enää puoli sivua. Latauksissa `<cr>` avaa tiedoston (käynnissä oleva tauotetaan, jatketaan tai yritetään uudelleen), `O` näyttää sen Finderissa, `dd` poistaa listalta (tiedosto jää) tai peruu käynnissä olevan. Vim-tilassa hakukenttä ei ota näppäimiä avattaessa. |
 | **Välilehtilista** (sivupalkki tai ylärivi) | `gs` siirtää fokuksen listaan, sitten `j/k`, `<cr>` valitsee, `x` sulkee, `p` kiinnittää/irrottaa, `Esc` palaa sivulle |
 | **⌘K ja osoitekenttä** | ⌃J/⌃K/⌃N/⌃P → `browser.walk(±1)`, kirjaimet kirjoittuvat normaalisti |
 | **Välilehtivaihdin (⌃Tab)** | `j/k` siirtää `selectedID`:tä (`TabSwitcher.move`) |

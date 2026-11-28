@@ -267,6 +267,37 @@ try:
     sv.cmd({"do": "ui", "settings": False}); time.sleep(0.6)
     sv.sp("select", id=a); time.sleep(0.5)
 
+    # History and Bookmarks: rows to walk, open, open in a new tab, remove.
+    sv.cmd({"do": "ui", "history": True}); time.sleep(1.0)
+    here = sv.cmd({"do": "vimkey", "chars": "z", "code": 6})
+    before = here["rows"]
+    t.ok("History opens with the keys Vim's, its pages the rows", here["caret"] is False and len(before) >= 2,
+         (here["caret"], len(before)))
+    t.ok("j picks the newest", key("j")["row"] == before[0])
+    key("d"); gone = key("d", settle=0.6)
+    t.ok("dd forgets it, the next picked in its place", gone["rows"] == before[1:] and gone["row"] == before[1],
+         (gone["row"], len(gone["rows"]), len(before)))
+    count = gone["tabs"]
+    opened = key("O", settle=1.2)
+    t.ok("O opens the picked page in a new tab in front", opened["tabs"] == count + 1 and opened["rows"] == []
+         and field()["address"].rstrip("/").endswith(before[1].rstrip("/").split("://")[-1]), (opened["tabs"], count, field()["address"], before[1]))
+    sv.cmd({"do": "ui", "history": True}); time.sleep(0.8)
+    key("j"); key("j"); picked = sv.cmd({"do": "vimkey", "chars": "z", "code": 6})["row"]
+    went = sv.cmd({"do": "vimkey", "chars": "\r", "code": 36}); time.sleep(1.2)
+    t.ok("Return opens it in the History tab itself", went["taken"] and field()["address"] != ""
+         and sv.cmd({"do": "vimkey", "chars": "z", "code": 6})["rows"] == [], (picked, field()["address"]))
+
+    sv.cmd({"do": "ui", "bookmarks": True}); time.sleep(1.0)
+    here = sv.cmd({"do": "vimkey", "chars": "z", "code": 6})
+    marks = here["rows"]
+    t.ok("Bookmarks: the outline's rows", here["caret"] is False and len(marks) == 2, (here["caret"], marks))
+    key("j"); key("d"); gone = key("d", settle=0.6)
+    t.ok("dd removes a bookmark", gone["rows"] == marks[1:] and gone["row"] == marks[1], gone["rows"])
+    went = sv.cmd({"do": "vimkey", "chars": "\r", "code": 36}); time.sleep(1.2)
+    t.ok("Return opens it in the tab", went["taken"] and field()["address"] != ""
+         and sv.cmd({"do": "vimkey", "chars": "z", "code": 6})["rows"] == [], field()["address"])
+    sv.sp("select", id=a); time.sleep(0.5)
+
     # x closes the tab in front, as ⌘W.
     count = len(sv.sp("state")["tabs"])
     t.ok("x is Vim's", key("x", settle=0.8)["taken"] is True)
