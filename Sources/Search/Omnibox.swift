@@ -580,6 +580,7 @@ struct AddressField: NSViewRepresentable {
     /// In the address bar there is no doubt where: it is the tab's own.
     private static func placeholderWords(for browser: Browser) -> String {
         if let site = browser.siteChip { return "Search \(site.name)" }
+        if browser.onlyBookmarks { return browser.launching ? "New tab: search bookmarks" : "Search bookmarks" }
         if browser.editingInline { return "Enter a web address" }
         switch browser.fieldMode {
         case .blank: return "Enter a web address"
@@ -801,7 +802,7 @@ struct AddressField: NSViewRepresentable {
             ]
             // A draft come back to its blank tab is carried on, not typed
             // over: the caret after it. An address ⌘L raises is selected whole.
-            if browser.active?.isBlank == true, !browser.typed.isEmpty {
+            if browser.caretAtEnd || (browser.active?.isBlank == true && !browser.typed.isEmpty) {
                 select(from: browser.typed.count, in: field)
             } else {
                 editor.selectAll(nil)

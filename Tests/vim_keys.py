@@ -9,7 +9,9 @@ then to the page if nothing took them.
 Off (as it ships), j is the page's. On: j/d/G/gg scroll the page, K and J
 change tabs (J the tab below in a column, K the one to the right across the top), / opens the find bar, i hands every key to the page until
 Escape, a box with the caret keeps every key and Escape lets it go, ? lists
-the keys. ⌘ keys are never Vim's.
+the keys. f and F hint links, gi types in a field. o and ge raise the
+address field, T ⌘K's, b and B one of bookmarks alone, and ⌃J/⌃K walk its
+list. ⌘ keys are never Vim's.
 """
 import sys
 import time
@@ -21,7 +23,8 @@ import split_view as sv  # noqa: E402
 sv.use("vim-keys")
 t = sv.T()
 
-CODES = {"f": 3, "F": 3, "s": 1, "e": 14, "h": 4, "j": 38, "k": 40, "d": 2, "u": 32, "g": 5, "G": 5, "K": 40, "J": 38, "i": 34, "x": 7, "/": 26, "?": 27, "a": 0}
+CODES = {"f": 3, "F": 3, "s": 1, "e": 14, "h": 4, "j": 38, "k": 40, "d": 2, "u": 32, "g": 5, "G": 5, "K": 40, "J": 38, "i": 34, "x": 7, "/": 26, "?": 27, "a": 0,
+         "o": 31, "O": 31, "b": 11, "B": 11, "T": 17, "E": 14}
 
 
 def key(ch, mods=None, ignoring=None, settle=0.5):
@@ -33,6 +36,21 @@ def key(ch, mods=None, ignoring=None, settle=0.5):
 
 
 ESC = "\x1b"
+# ⌃ and a letter: the control character it types, and its key.
+CONTROL = {"j": ("\n", 38), "k": ("\x0b", 40), "n": ("\x0e", 45), "p": ("\x10", 35)}
+
+
+def ctrl(letter, settle=0.3):
+    chars, code = CONTROL[letter]
+    answer = sv.cmd({"do": "vimkey", "chars": chars, "code": code, "mods": ["control"], "ignoring": letter})
+    time.sleep(settle)
+    return answer
+
+
+def field(): return sv.cmd({"do": "suggest"})
+def placeholder(): return sv.cmd({"do": "probe"})["placeholder"]
+# The tab in front: a key nothing is mapped to answers with it.
+def front(): return sv.cmd({"do": "vimkey", "chars": "z", "code": 6})["active"].lower()
 
 
 def y(id): return sv.ev(id, "Math.round(scrollY)")
@@ -132,6 +150,67 @@ try:
     key("f"); followed = key("a", settle=1.5)
     t.ok("f on a link follows it", sv.url(sv.sp("state"), a).endswith("/first"), sv.url(sv.sp("state"), a))
 
+    # Opening: o and ge raise the field over the page, T ⌘K's, b and B
+    # one of bookmarks alone; ⌃J ⌃K ⌃N ⌃P walk a list from its field.
+    key("o", settle=0.8)
+    st = field(); c = sv.cmd({"do": "caret"})
+    t.ok("o raises the field with the page's address", st["editing"] and st["typed"] == st["address"] != "", st)
+    t.ok("selected whole, to type over", c.get("selected") == [0, len(c.get("text", ""))], c)
+    key(ESC, settle=0.6)
+    t.ok("Escape puts it away", field()["editing"] is False)
+    key("g"); key("e", settle=0.8)
+    st = field(); c = sv.cmd({"do": "caret"})
+    t.ok("ge: the address, the caret after it", st["typed"] == st["address"] and c.get("selected") == [len(c.get("text", "")), 0],
+         (st["typed"], c.get("selected")))
+    key(ESC, settle=0.6)
+
+    key("T", settle=0.8)
+    st = field()
+    t.ok("T raises ⌘K's list of open tabs", st["editing"] and placeholder() == "Switch to an open tab"
+         and len(st["offers"]) >= 2 and st["picked"] == 0, (placeholder(), st))
+    ctrl("j"); t.ok("⌃J goes down the list", field()["picked"] == 1, field()["picked"])
+    ctrl("k"); t.ok("⌃K up", field()["picked"] == 0, field()["picked"])
+    ctrl("n"); ctrl("p")
+    t.ok("⌃N and ⌃P the same", field()["picked"] == 0, field()["picked"])
+    key(ESC, settle=0.6)
+
+    sv.sp("select", id=b); time.sleep(0.5); sv.cmd({"do": "keeppage"}); tall = sv.url(sv.sp("state"), b)
+    sv.sp("select", id=a); time.sleep(0.5); sv.cmd({"do": "keeppage"})
+    key("b", settle=0.8)
+    st = field()
+    t.ok("b offers bookmarks alone", st["editing"] and st["typed"] == "" and st["offers"]
+         and all(o[1] == "bookmark" for o in st["offers"]) and st["picked"] == 0, st)
+    t.ok("and says so", placeholder() == "Search bookmarks", placeholder())
+    sv.cmd({"do": "suggest", "action": "go"}); time.sleep(1.2)
+    t.ok("Return opens the first in this tab", sv.url(sv.sp("state"), a) == tall, (sv.url(sv.sp("state"), a), tall))
+
+    # A new tab is a blank one (or the blank tab already there), whose
+    # field is up as the tab itself.
+    key("B", settle=1.0)
+    st = field()
+    t.ok("B offers them for a new tab", st["address"] == "" and st["offers"]
+         and all(o[1] == "bookmark" for o in st["offers"]) and placeholder() == "Search bookmarks", (st, placeholder()))
+    ctrl("j"); down = field()["picked"]; ctrl("k")
+    t.ok("⌃J and ⌃K walk a blank tab's list too", len(st["offers"]) == 2 and down == 1 and field()["picked"] == 0,
+         (len(st["offers"]), down, field()["picked"]))
+    sv.cmd({"do": "suggest", "action": "go"}); time.sleep(1.2)
+    t.ok("and Return opens it there", field()["address"] == tall and not front().startswith(a.lower()), (field()["address"], front()))
+    opened = front()
+
+    key("g"); key("E", settle=1.0)
+    st = field(); c = sv.cmd({"do": "caret"})
+    t.ok("gE: the address in a new tab's field, the caret after it",
+         st["address"] == "" and st["typed"] == tall and c.get("selected") == [len(c.get("text", "")), 0],
+         (st["address"], st["typed"], c.get("selected")))
+    sv.cmd({"do": "suggest", "action": "go"}); time.sleep(1.2)
+    t.ok("and Return goes there", field()["address"] == tall and front() != opened, (field()["address"], front()))
+
+    sv.sp("select", id=a); time.sleep(0.5)
+    key("O", settle=1.0)
+    st = field()
+    t.ok("O: a new tab, its field empty", st["address"] == "" and st["typed"] == "" and placeholder() == "Enter a web address", (st, placeholder()))
+    sv.sp("select", id=a); time.sleep(0.6)
+
     # Hint letters of one's own.
     sv.cmd({"do": "settings", "set": "vim.hints", "value": "hje"}); time.sleep(0.4)
     links = "".join(f"<button onclick=\"document.title='b{n}'\">b{n}</button> " for n in range(4))
@@ -150,6 +229,24 @@ try:
     # Off again: j is the page's.
     sv.cmd({"do": "settings", "set": "vim.keys", "value": False}); time.sleep(0.5)
     t.ok("off again: j is the page's", key("j")["taken"] is False)
+
+    # ⌘T's field floating over the page (Settings › New tab in a floating
+    # field, read at launch): B raises that one, and Escape leaves the page.
+    sv.setup(**{"newtab.floating": True}); sv.launch()
+    a = sv.page("long"); b = sv.page("tall")
+    sv.sp("select", id=b); time.sleep(0.5); sv.cmd({"do": "keeppage"}); tall = sv.url(sv.sp("state"), b)
+    sv.sp("select", id=a); time.sleep(0.5)
+    sv.cmd({"do": "settings", "set": "vim.keys", "value": True}); time.sleep(0.5)
+    key("B", settle=1.0)
+    st = field()
+    t.ok("floating, B raises the field over the page", st["editing"] and st["address"] != tall
+         and placeholder() == "New tab: search bookmarks" and st["offers"] and st["picked"] == 0, (st, placeholder()))
+    key(ESC, settle=0.5)
+    t.ok("and Escape puts it away, the page as it was", not field()["editing"] and front().startswith(a.lower()), field())
+    count = len(sv.sp("state")["tabs"])
+    key("B", settle=1.0); sv.cmd({"do": "suggest", "action": "go"}); time.sleep(1.2)
+    t.ok("Return opens the bookmark in a new tab", len(sv.sp("state")["tabs"]) == count + 1 and field()["address"] == tall
+         and not front().startswith(a.lower()), (len(sv.sp("state")["tabs"]), count, field()["address"]))
 finally:
     sv.finish()
 t.done()

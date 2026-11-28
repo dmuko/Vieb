@@ -221,11 +221,19 @@ sellaisinaan.
 
 | Näppäin | Vimium-komento | Toteutus |
 |---|---|---|
-| `o` | Vomnibar.activate | `browser.edit()` (⌘L) |
-| `O` | Vomnibar.activateInNewTab | `browser.launch()` + kenttä |
-| `b` `B` | Vomnibar.activateBookmarks(InNewTab) | osoitekenttä kirjanmerkkirajauksella |
-| `T` | Vomnibar.activateTabSelection | `browser.searchTabsKey()` (⌘K) |
-| `ge` `gE` | Vomnibar.activateEditUrl(InNewTab) | kenttä esitäytettynä nykyisellä osoitteella |
+| `o` | Vomnibar.activate | `browser.edit()` (⌘L): osoite valittuna, kirjoitus korvaa sen |
+| `O` | Vomnibar.activateInNewTab | `browser.launch()` (⌘T) |
+| `b` `B` | Vomnibar.activateBookmarks(InNewTab) | `browser.openBookmarksField(newTab:)`: tyhjä kenttä, joka tarjoaa vain kirjanmerkkejä |
+| `T` | Vomnibar.activateTabSelection | `browser.summon()` (⌘K) |
+| `ge` `gE` | Vomnibar.activateEditUrl(InNewTab) | `browser.editAddress(newTab:)`: nykyinen osoite, kursori sen perässä |
+| ⌃J ⌃N / ⌃K ⌃P | *(Vimiumin listanäppäimet)* | `browser.walk(±1)`, kun kursori on osoitekentässä ja lista näkyy; ilman listaa ⌃K jää kentälle (rivin loppu pois) |
+
+Kirjanmerkkikenttä (`b`/`B`) kuuluu välilehdelle, jossa se avattiin, koska
+tyhjän välilehden kenttä näkyy ilman `editing`-tilaa. Ennen kahta kirjainta
+kirjanmerkit tulevat tallennusjärjestyksessä (yksi kirjain rajaa nimen sanan
+tai osoitteen alkuun), sen jälkeen osoitekentän omalla haulla. Ensimmäinen
+rivi on valmiiksi valittu, joten Return avaa sen, ja yksi Esc sulkee kentän
+(muualla Searchin Esc vapauttaa ensin valitun rivin).
 
 Sarjan aikakatkaisu on 1 s. `g` jää tilamerkkiin näkyviin, kunnes sarja
 valmistuu tai aikakatkaisu umpeutuu.

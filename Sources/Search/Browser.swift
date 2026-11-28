@@ -430,8 +430,20 @@ final class Browser: NSObject, ObservableObject {
             // page, and with the line turned off, nowhere at all (#1374).
             if !editing, inlineEdit { inlineEdit = false }
             if !editing { editingPeek = false }
+            if !editing, bookmarksField != nil { bookmarksField = nil }
+            if !editing { caretAtEnd = false }
         }
     }
+    /// The tab whose field offers bookmarks and nothing else, as Vim's b and
+    /// B raise it (Vim.swift). A tab's, not the window's: a blank tab's
+    /// field is up without `editing`, so going to another tab ends it too.
+    /// Gone with the field, or with ⌘L, ⌘T or ⌘K raising theirs over it.
+    @Published private var bookmarksField: Tab.ID?
+    var onlyBookmarks: Bool { bookmarksField != nil && bookmarksField == activeID && fieldShowing }
+    /// While the field is up, it takes the keys with the caret after the
+    /// address instead of the address selected, for changing it (Vim's ge
+    /// and gE). Every time: the field can be asked for the keys twice over.
+    var caretAtEnd = false
     /// The field was raised by ⌘L over a peek: it shows the peek's address,
     /// and Return takes the peek there, not the tab underneath (idea 691).
     private(set) var editingPeek = false
@@ -5160,6 +5172,8 @@ final class Browser: NSObject, ObservableObject {
         cancelTabEdit()
         summoning = false
         siteChip = nil
+        bookmarksField = nil
+        caretAtEnd = false
         editing = true
         launching = true
         // After launching, so the list it works out is ⌘T's (see guess()).
@@ -8221,6 +8235,8 @@ final class Browser: NSObject, ObservableObject {
         cancelTabEdit()
         launching = false
         inlineEdit = false
+        bookmarksField = nil
+        caretAtEnd = false
         summoning = true
         // Search Tabs… clicked in the menu raises it with ⌘ up, and no
         // release would come to say so: the next ⌘K walked the list.
@@ -8269,6 +8285,17 @@ final class Browser: NSObject, ObservableObject {
             // The most recent page is already chosen, so ⌘K then Return is the
             // whole gesture.
             picked = offers.isEmpty ? nil : 0
+            return
+        }
+
+        // Bookmarks alone (Vim's b and B): the first picked as it is typed,
+        // so Return opens it, and ↓ walks on from there.
+        if onlyBookmarks {
+            siteOffer = nil
+            ending = nil
+            offers = bookmarks.places(matching: typed, limit: 10)
+            picked = offers.isEmpty ? nil : 0
+            if picked != nil { typing.pickedByTyping = true }
             return
         }
 
@@ -8746,6 +8773,8 @@ final class Browser: NSObject, ObservableObject {
         let words = wordsToCarry
         summoning = false
         launching = false
+        bookmarksField = nil
+        caretAtEnd = false
         // A peek in front is the page being read: its address, not the
         // one of the tab underneath (idea 691).
         let peek = words == nil && peekInFront ? peekTab?.shownURL : nil
@@ -8753,6 +8782,33 @@ final class Browser: NSObject, ObservableObject {
         editing = true
         editingPeek = peek != nil
         focusRequest += 1
+    }
+
+    /// Vim's b and B (Vim.swift): the field, empty, offering bookmarks
+    /// alone, for this tab or a new one.
+    func openBookmarksField(newTab: Bool) {
+        if newTab { launch() } else { edit() }
+        guard fieldShowing else { return }
+        bookmarksField = activeID
+        typed = ""
+    }
+
+    /// Vim's ge and gE (Vim.swift): the page's address in the field with
+    /// the caret after it, to be changed and gone to here or in a new tab.
+    func editAddress(newTab: Bool) {
+        let address = shownAddress
+        if newTab { launch() } else { edit() }
+        guard fieldShowing else { return }
+        typed = address
+        caretAtEnd = true
+    }
+
+    /// Whether ⌃J and the rest walk the field's list (Vim.swift): the caret
+    /// in the address field, and a list under it. A blank tab's field too,
+    /// up without `editing`.
+    func walksList(from event: NSEvent) -> Bool {
+        guard fieldShowing, !offers.isEmpty, let editor = event.window?.firstResponder as? NSTextView else { return false }
+        return editor.delegate is WebsiteAddressField
     }
 
     func dismiss() {
@@ -8780,7 +8836,13 @@ final class Browser: NSObject, ObservableObject {
             close(tab)
             return
         }
-        // A blank tab has nothing behind the field to go back to.
+        // A blank tab has nothing behind the field to go back to: Esc lets
+        // go of bookmarks alone (Vim's b), and the field is the usual one.
+        if onlyBookmarks, active?.isBlank == true {
+            bookmarksField = nil
+            typed = typed
+            return
+        }
         guard active?.isBlank == false else { return }
         editing = false
         typed = ""

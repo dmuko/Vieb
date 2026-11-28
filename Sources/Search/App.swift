@@ -2081,8 +2081,10 @@ struct ContentView: View {
                 browser.closeFind()
                 return true
             }
-            // One step at a time: the list first, then the field.
-            if browser.picked != nil {
+            // One step at a time: the list first, then the field. Not with
+            // bookmarks alone (Vim's b), whose first row is picked from the
+            // start: there one Escape puts the field away, as in Vimium.
+            if browser.picked != nil, !browser.onlyBookmarks {
                 browser.picked = nil
                 return true
             }

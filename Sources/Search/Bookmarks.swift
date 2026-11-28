@@ -186,6 +186,28 @@ final class Bookmarks {
         return (best.filter { $0.score > 0 }.map(suggestion), best.filter { $0.score == 0 }.map(suggestion))
     }
 
+    /// Bookmarks alone, for a field that offers nothing else (Vim's b and
+    /// B, Vim.swift). Before two letters are typed, in the order they are
+    /// kept, as there is no better guess yet; from two, as the address
+    /// field finds them, typos last.
+    func places(matching typed: String, limit: Int) -> [Suggestion] {
+        let needle = typed.trimmingCharacters(in: .whitespaces).lowercased()
+        if needle.count >= 2 {
+            let kept = places(for: needle, limit: limit)
+            return Array((kept.found + kept.slips).prefix(limit))
+        }
+        if sites == nil { sites = Bookmarks.sites(roots) }
+        return (sites ?? [])
+            // One letter is in nearly every address: the start of a word of
+            // the name, or of the address, as the field's own list reads it.
+            .filter { site in
+                needle.isEmpty || site.address.hasPrefix(needle)
+                    || site.title.split(separator: " ").contains { $0.hasPrefix(needle) }
+            }
+            .prefix(limit)
+            .map { Suggestion(key: Address.editable($0.url), title: $0.name, url: $0.url, kind: .bookmark) }
+    }
+
     private static func sites(_ nodes: [Bookmark]) -> [Site] {
         nodes.flatMap { node -> [Site] in
             if node.isFolder { return sites(node.children ?? []) }

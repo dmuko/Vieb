@@ -142,6 +142,66 @@ final class VimTests: XCTestCase {
         XCTAssertEqual(VimCommand.linkHints.rawValue, "LinkHints.activateMode", "Vimium's name")
     }
 
+    // MARK: opening
+
+    func testOpeningKeysAreVimiums() {
+        var sequence = VimSequence()
+        XCTAssertEqual(sequence.feed("o"), .run(.openField))
+        XCTAssertEqual(sequence.feed("O"), .run(.openFieldNewTab))
+        XCTAssertEqual(sequence.feed("b"), .run(.openBookmarks))
+        XCTAssertEqual(sequence.feed("B"), .run(.openBookmarksNewTab))
+        XCTAssertEqual(sequence.feed("T"), .run(.openTabs))
+        XCTAssertEqual(sequence.feed("g"), .pending)
+        XCTAssertEqual(sequence.feed("e"), .run(.editAddress))
+        XCTAssertEqual(sequence.feed("g"), .pending)
+        XCTAssertEqual(sequence.feed("E"), .run(.editAddressNewTab))
+        XCTAssertEqual(VimCommand.openTabs.rawValue, "Vomnibar.activateTabSelection", "Vimium's name")
+    }
+
+    func testControlWalksAList() {
+        XCTAssertEqual(VimCommand.listSteps[VimKeys.name(of: key("\n", code: 38, flags: .control, ignoring: "j"))!], 1)
+        XCTAssertEqual(VimCommand.listSteps[VimKeys.name(of: key("\u{0b}", code: 40, flags: .control, ignoring: "k"))!], -1)
+        XCTAssertEqual(VimCommand.listSteps["<c-n>"], 1)
+        XCTAssertEqual(VimCommand.listSteps["<c-p>"], -1)
+        XCTAssertNil(VimCommand.defaults["<c-j>"], "not a command: only a list's")
+    }
+
+    func testControlLeavesAFieldWithNoListAlone() {
+        let browser = browser()
+        defer { browser.closeAll() }
+        // No field up: ⌃K is the field's or the page's (the rest of the line).
+        XCTAssertFalse(browser.vim.take(key("\u{0b}", code: 40, flags: .control, ignoring: "k"), typing: true))
+    }
+
+    func testBookmarksAloneInTheirOrderThenAsFound() {
+        let bookmarks = Bookmarks(file: "bookmarks-vim-\(UUID().uuidString).json")
+        defer { bookmarks.retire() }
+        _ = bookmarks.add(URL(string: "https://zebra.example/")!, title: "Zebra")
+        _ = bookmarks.add(URL(string: "https://apple.example/")!, title: "Apple")
+        _ = bookmarks.add(URL(string: "https://mango.example/")!, title: "Mango")
+        _ = bookmarks.add(URL(string: "javascript:alert(1)")!, title: "A bookmarklet")
+        XCTAssertEqual(bookmarks.places(matching: "", limit: 10).map(\.title), ["Zebra", "Apple", "Mango"],
+                       "nothing typed: as they are kept, no bookmarklet")
+        XCTAssertEqual(bookmarks.places(matching: "", limit: 2).count, 2)
+        XCTAssertEqual(bookmarks.places(matching: "m", limit: 10).map(\.title), ["Mango"])
+        XCTAssertEqual(bookmarks.places(matching: "appl", limit: 10).map(\.title), ["Apple"])
+        XCTAssertTrue(bookmarks.places(matching: "", limit: 10).allSatisfy { $0.kind == .bookmark })
+    }
+
+    func testBookmarksAloneGoWithTheField() {
+        let browser = browser()
+        defer { browser.closeAll() }
+        browser.openBookmarksField(newTab: false)
+        XCTAssertTrue(browser.editing)
+        XCTAssertTrue(browser.onlyBookmarks)
+        XCTAssertEqual(browser.typed, "")
+        browser.summon()
+        XCTAssertFalse(browser.onlyBookmarks, "⌘K over it offers its own")
+        browser.openBookmarksField(newTab: false)
+        browser.editing = false
+        XCTAssertFalse(browser.onlyBookmarks, "and the next field is as ever")
+    }
+
     func testEveryCommandHasADefaultKey() {
         XCTAssertEqual(Set(VimCommand.defaults.values), Set(VimCommand.allCases))
     }
