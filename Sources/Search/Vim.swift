@@ -1144,5 +1144,24 @@ extension View {
 
     /// The same, with the list the page put in the environment.
     func vimRow(_ id: String) -> some View { modifier(VimRowInList(id: id)) }
+
+    /// The picked row kept in sight, by the id it is drawn with. A turn
+    /// later: `$selected` tells of the row before it is the one picked, and
+    /// scrolling there and then drew the rows with the row before lit. j
+    /// lit nothing at first, and k went down one more before going up.
+    func vimKeepsInSight<ID: Hashable>(_ list: VimList, with reader: ScrollViewProxy,
+                                       id: @escaping (String) -> ID?) -> some View {
+        onReceive(list.$selected) { picked in
+            guard let picked, let id = id(picked) else { return }
+            DispatchQueue.main.async {
+                guard list.selected == picked else { return }
+                withAnimation(Motion.quick) { reader.scrollTo(id) }
+            }
+        }
+    }
+
+    func vimKeepsInSight(_ list: VimList, with reader: ScrollViewProxy) -> some View {
+        vimKeepsInSight(list, with: reader) { $0 }
+    }
 }
 

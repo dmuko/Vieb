@@ -120,10 +120,7 @@ struct HistoryPanel: View {
                         .padding(.bottom, 2)
                     }
                     .listHeight(420)
-                    .onReceive(vim.$selected) { id in
-                        guard let id else { return }
-                        withAnimation(Motion.quick) { reader.scrollTo(id) }
-                    }
+                    .vimKeepsInSight(vim, with: reader)
                     }
                 }
             }
@@ -489,10 +486,7 @@ struct DownloadsPanel: View {
             // icons, not text, at the inset a rule would start from.
             .environment(\.ruleInset, 0)
             .listHeight(420)
-            .onReceive(vim.$selected) { id in
-                guard let id else { return }
-                withAnimation(Motion.quick) { reader.scrollTo(id) }
-            }
+            .vimKeepsInSight(vim, with: reader)
             }
         }
     }

@@ -525,10 +525,7 @@ struct SettingsPanel: View {
                 }
                 .onAppear { if let lit { reader.scrollTo(lit, anchor: .center) } }
                 // The row Vim's keys go to, kept in sight.
-                .onReceive(vim.$selected) { id in
-                    guard let id else { return }
-                    withAnimation(Motion.quick) { reader.scrollTo(id) }
-                }
+                .vimKeepsInSight(vim, with: reader)
             }
             // A page of its own opens at its top. One scroll view kept for
             // them all opened Tabs as far down as General had been read.

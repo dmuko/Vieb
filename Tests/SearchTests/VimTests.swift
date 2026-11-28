@@ -359,6 +359,37 @@ final class VimTests: XCTestCase {
         XCTAssertEqual(seen.names, ["b", "b", "a"], "once")
     }
 
+    /// The row lit is the row picked, at every key, in a list that keeps
+    /// it in sight: lit a key late, j showed nothing at first and k went
+    /// down one more before going up.
+    func testTheRowLitIsThePickedOneAtEveryKey() {
+        let list = VimList()
+        let names = (0..<30).map { "r\($0)" }
+        list.rows = { names }
+        let drawn = Drawn()
+        let host = NSHostingView(rootView: ScrollViewReader { reader in
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(names, id: \.self) { name in
+                        LitRow(name: name, list: list, drawn: drawn).frame(height: 30).id(name)
+                    }
+                }
+            }
+            .vimKeepsInSight(list, with: reader)
+        })
+        host.frame = CGRect(x: 0, y: 0, width: 300, height: 200)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: true)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.2)) }
+        settle()
+        for step in [1, 1, 1, 1, 1, -1, -1] {
+            list.move(step)
+            settle()
+            XCTAssertEqual(drawn.lit, list.selected.map { [$0] } ?? [], "after \(step > 0 ? "j" : "k")")
+        }
+    }
+
     func testEveryCommandHasADefaultKey() {
         let keys = Set(VimCommand.defaults.values).union(VimCommand.defaults(column: false, rows: true).values)
         XCTAssertEqual(keys, Set(VimCommand.allCases))
@@ -486,5 +517,23 @@ private struct PressedRow: View {
     let name: String
     var body: some View {
         Text(name).onVimPress { seen.names.append(name) }
+    }
+}
+
+@MainActor
+private final class Drawn {
+    var shown: [String: Bool] = [:]
+    var lit: [String] { shown.filter(\.value).map(\.key).sorted() }
+}
+
+/// A row that says, each time it is drawn, whether it was drawn picked.
+private struct LitRow: View {
+    let name: String
+    @ObservedObject var list: VimList
+    let drawn: Drawn
+    var body: some View {
+        let picked = list.selected == name
+        drawn.shown[name] = picked
+        return Text(name).vimRow(name, in: list)
     }
 }

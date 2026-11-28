@@ -1494,10 +1494,7 @@ struct BookmarksPanel: View {
                                 withAnimation(Motion.settle) { scroller.scrollTo(id, anchor: .center) }
                             }
                         }
-                        .onReceive(vim.$selected) { id in
-                            guard let id = id.flatMap(UUID.init(uuidString:)) else { return }
-                            withAnimation(Motion.quick) { scroller.scrollTo(id) }
-                        }
+                        .vimKeepsInSight(vim, with: scroller) { UUID(uuidString: $0) }
                     }
                 }
             }
@@ -1599,10 +1596,7 @@ struct BookmarksPanel: View {
                 .padding(.bottom, 2)
             }
             .listHeight(440)
-            .onReceive(vim.$selected) { id in
-                guard let id = id.flatMap(UUID.init(uuidString:)) else { return }
-                withAnimation(Motion.quick) { scroller.scrollTo(id) }
-            }
+            .vimKeepsInSight(vim, with: scroller) { UUID(uuidString: $0) }
             }
         }
     }
